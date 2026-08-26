@@ -1,0 +1,117 @@
+# Set-ExecutionPolicy Unrestricted -Scope Processpi
+from snAPI import *
+from snAPI.Main import *
+import matplotlib.pyplot as plt
+sz = 45  # Font size
+sz_small = sz-10 #Small fontsize
+plt.rcParams['font.family'] = 'Times New Roman'
+plt.rcParams['font.size'] = sz_small
+#plt.rcParams['font.weight'] = 'bold'
+#plt.rcParams['axes.labelweight'] = 'bold'
+plt.rcParams['axes.titlesize'] = sz
+plt.rcParams['axes.titleweight'] = 'bold'
+plt.rcParams['axes.labelsize'] = sz_small
+plt.rcParams['legend.fontsize'] = sz_small-10
+plt.rcParams['xtick.labelsize'] = sz_small
+plt.rcParams['ytick.labelsize'] = sz_small
+import datetime
+import pandas as pd
+import os
+import numpy as np
+from scipy.optimize import curve_fit
+
+def fit_Lorenz(x, y, f0, init):
+
+    def Lorentzian(f, amp, cen, wid, Offset):
+        return amp*wid/((f-cen)**2 + wid**2) + Offset
+
+    init_vals = init
+    popt, cov = curve_fit(Lorentzian, x, y, p0=init_vals, maxfev=10000)
+
+    Amp = popt[0]
+    cen = np.abs(popt[1])
+    wid = np.abs(popt[2])
+    Offset = popt[3]
+
+    x_fit = np.linspace(min(x), max(x), 1000)
+    y_fit = np.zeros(len(x_fit))
+
+    for i in range(len(x_fit)):
+        y_fit[i] = Lorentzian(x_fit[i], Amp, cen, wid, Offset)
+
+    return x_fit, y_fit, wid, cen, Amp, Offset
+
+sn = snAPI()
+#sn.getDevice(0) 
+#sn.initDevice(MeasMode.T2)
+print('cwd',os.getcwd()) 
+input_dir = r'.\PlotBasic\Input'
+output_dir = r'.\PlotBasic\Output\g2data_fm'
+os.makedirs(output_dir, exist_ok=True)
+os.getcwd() 
+filesstring = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith('.ptu')]
+
+d=binsize= 200  #in ps
+c=windowsize=100000#binsize*100 #in ps
+
+a,b =3,4
+
+for filename in filesstring:
+    print
+    sn.getFileDevice(filename)
+    print(f"Data from {filename} loaded successfully")
+    sn.correlation.setG2Parameters(a, b, windowsize, binsize)
+    sn.correlation.measure(waitFinished=True)
+    g2, lagtimes = sn.correlation.getG2Data()
+    lagtimes_ns=np.array(lagtimes) * 1e9
+     
+    fig, ax = plt.subplots(figsize=(9,6))
+        
+    #plot 1 g2 orignal   
+    ax.plot(lagtimes_ns, g2, 'r', label=f'Raw data', linewidth=0.5)
+    #g2_avg_fit plot
+    plot_dual=False
+    if plot_dual:
+        smooth_wsize=10
+        smoothed_g2=np.convolve(g2, np.ones(smooth_wsize)/smooth_wsize, mode='valid')
+        smoothed_lagtimes_ns=lagtimes_ns[:len(smoothed_g2)]
+        ax.plot(smoothed_lagtimes_ns, smoothed_g2, 'b-',label=f'Smoothed', linewidth=0.5)  
+        ax.set_xlabel('Delay (ns)')
+
+    #g2 fit with Lorentzian function to extract values
+    plot_fit=True
+    if plot_fit:
+        init_vals = [0, 1, 1, 1]
+        x_fit, y_fit, sigma, x0, Amp, Offset = fit_Lorenz(lagtimes_ns, g2, max(g2), init_vals)
+        print('FWHM =',round(2*sigma,4))
+        print('min g(2)',round(min(y_fit),4))  
+        print('x0', round(x0,4))  
+        print('Offset',round(Offset,4))
+        print("Amp", round(Amp,4))        
+        ax.plot(x_fit, y_fit, 'b-',label=f'Fit', linewidth=0.5)  
+        ax.set_xlabel('Delay (ns)')
+        textstr = '\n'.join((
+        r'$g^{(2)}(0)=%.2f$' % (min(y_fit)),
+        r'$FWHM=%.2f$' % (2*sigma)))
+        props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+        ax.text(0.05, 0.3, textstr, transform=ax.transAxes, fontsize=sz_small-10, horizontalalignment='left', verticalalignment='top', bbox=props)
+                
+    ax.set_ylim(0,2)
+    ax.set_xlim(-100,100)
+    ax.set_ylabel(f'$g^{(2)}(τ)$')
+    #ax.set_title(f'$g^{(2)}(τ)$ Correlation (BinWidth = {d}ps & WindowSize = {int(c/1000):.0f}ns)')
+    #ax.set_title(f'$g^{(2)}(τ)$ Correlation')
+    ax.legend(loc='lower right')
+    plt.tight_layout()
+    # Save the figure to the output folder
+    sv=False    
+    if sv:
+        figpath = os.path.join(output_dir, 'g2plot_' + os.path.basename(filename) + '_' + datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S') + '.png')
+        try:
+            fig.savefig(figpath)
+            print(f"Figure saved as {figpath}")
+        except Exception as e:
+            print(f"Error saving figure: {e}")                    
+sn.closeDevice()
+plt.show()
+

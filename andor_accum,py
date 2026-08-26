@@ -1,0 +1,93 @@
+import time
+import matplotlib.pyplot as plt
+from pylablib.devices import Andor
+
+# Use a try...finally block for robust cleanup
+cam = None
+spec = None
+try:
+    # --- 1. Initialization and Connection ---
+    print("Connecting...")
+    cam = Andor.AndorSDK2Camera()
+    spec = Andor.ShamrockSpectrograph()
+
+    # --- 2. Cooling ---
+    set_temp = -80
+    cam.set_temperature(set_temp)
+    cam.set_fan_mode("full")
+    cam.set_cooler(True)
+    print(f"Waiting for camera to cool to {set_temp}°C...")
+    while cam.get_temperature() > (set_temp):
+        print(f"Current temperature: {cam.get_temperature():.0f}°C", end="\r")
+        time.sleep(2)
+    print("Target temperature reached.")
+
+    # --- 3. Spectrograph and Wavelength Calibration ---
+    spec.set_wavelength(484E-9)
+    spec.setup_pixels_from_camera(cam)
+    wavelengths = spec.get_calibration()
+
+    # --- 4. Camera Acquisition Setup ---
+    print("Configuring accumulation mode...")
+    cam.set_acquisition_mode("accum")
+    # THE KEY FIX: Use the correct trigger mode string 'int'
+    cam.set_trigger_mode('int')
+    cam.setup_accum_mode(num_acc=2)
+    cam.set_exposure(10)
+    cam.set_read_mode("fvb")
+    cam.set_amp_mode(preamp=1, hsspeed=0, oamp=0, channel=0)
+    print("Configuration complete.")
+
+        # --- 5. Acquire Data ---
+    print(f"Starting acquisition (2 accumulations x 5s)...")
+    cam.start_acquisition() #used onlny to setup the acquisiton mode not to actullay collect the data
+    cam.grab(frame_timeout=100)
+    cam.apply_settings()
+    #Out[27]: [array([[547, 549, 548, ..., 550, 548, 549]], shape=(1, 1024), dtype=uint16)]
+    
+    cam.stop_acquisition()
+    cam.wait_for_acquisition() # Wait for the full 10s to complete
+    print("Acquisition finished.")
+
+    # ADD THIS CHECK: Verify that there is an image in the buffer before reading
+    frames_status = cam.get_frames_status()
+    print(f"Frames in buffer: {frames_status['total']}")
+    cam.set_amp_mode(preamp=)
+
+    if frames_status['total'] > 0:
+        spectrum = cam.read_oldest_image()
+    else:
+        # If the buffer is empty, set spectrum to None and print an error
+        spectrum = None
+        print("ERROR: Acquisition completed, but no image was found in the camera buffer.")
+
+
+    # --- 6. Plotting ---
+    # This 'if' statement prevents the script from crashing if no spectrum was acquired
+    if spectrum is not None:
+        print("Plotting spectrum.")
+        # The image is 2D, but for a spectrum, you typically want a 1D slice or to sum the rows.
+        
+        # Option A: Plot the center row
+        center_row_index = spectrum.shape[0] // 2
+        spectrum_1d = spectrum[center_row_index, :]
+
+        # Option B: Sum all rows (Vertical Binning)
+        # spectrum_1d = spectrum.sum(axis=0)
+
+        fig, ax = plt.subplots()
+        ax.plot(wavelengths, spectrum_1d)
+        ax.set_xlabel("Wavelength")
+        ax.set_ylabel("Intensity (Counts)")
+        ax.set_title("Acquired Spectrum")
+        ax.grid(True)
+        plt.show()
+
+finally:
+    # --- 7. Cleanup ---
+    if cam and cam.is_opened():
+        cam.close()
+        print("Camera connection closed.")
+    if spec and spec.is_opened():
+        spec.close()
+        print("Spectrograph connection closed.")
