@@ -6,7 +6,7 @@
 
 import sys
 import os
-import instrument 
+from . import instrument 
 
 class PidScheduleItem:
     def __init__(self, temperature, kc=None, ti=None, td=None):

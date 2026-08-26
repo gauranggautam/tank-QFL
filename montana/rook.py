@@ -3,7 +3,7 @@
 
 import sys
 import os
-import instrument
+from . import instrument
 import time
 import datetime
 

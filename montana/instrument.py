@@ -18,11 +18,11 @@ import json
 import re
 import time
 
-import ssh_tunnel
+from . import ssh_tunnel
 import socket
 import http
 
-import mirs_helpers
+from . import mirs_helpers
 
 _force_ipv4 = True  # Some day IPv6 will be ubiquitous.  Today is not that day.
 

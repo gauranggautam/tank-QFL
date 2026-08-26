@@ -458,7 +458,7 @@ def amc_movexyz(x,y,f,amc=None):
     amc.move.setControlTargetPosition(0, int(x * 1000));wait_until_stable(amc, 0)
     amc.move.setControlTargetPosition(1, int(f * 1000));wait_until_stable(amc, 1)
     amc.move.setControlTargetPosition(2, int(y * 1000));wait_until_stable(amc, 2)      
-def output_dir_folder(base_dir=r'C:\Data_Python_PL'):
+def output_dir_folder(base_dir=r'D:\Data_Python_PL'):
     """
     Creates a subdirectory named with the current date (YYYY_MM_DD)
     inside a given base directory.
@@ -575,9 +575,9 @@ def run_focus_sweep(fbase=None, fstep=0.1, fsize=30, movetobest=True, showplt=Tr
         # Close devices only if they were opened locally within this function.
         if sn_local and sn: close_device_all(sn=sn)
         if amc_local and amc: close_device_all(amc=amc)
-def run_pl_scan(center_x=0, center_y=0, center_f=None,
+def run_pl_scan(center_x=None, center_y=None, center_f=None,
                 focus_sweep=False, f_size=50,
-                x_size=5, y_size=5, step=1,
+                x_size=5, y_size=5, step=0.1,
                 detector_config=2,
                 logz=False,
                 out_dir_base=r'D:\Data_Python_PL\PLmaps',
@@ -604,6 +604,9 @@ def run_pl_scan(center_x=0, center_y=0, center_f=None,
             sn_local = True
 
         # === Setup Scan Area, Output, and Focus ===
+        
+        center_x = center_x if center_x is not None else amc.move.getPosition(0) / 1000
+        center_y = center_y if center_y is not None else amc.move.getPosition(2) / 1000
         x_start, x_end = center_x - (x_size / 2), center_x + (x_size / 2)
         y_start, y_end = center_y - (y_size / 2), center_y + (y_size / 2)
         out_dir = output_dir_folder(base_dir=out_dir_base)
@@ -727,7 +730,7 @@ def run_edge_sweep(center_x=None, center_f=None, f_size=5,
                 x_size=5, step=1,
                 detector_config=2,
                 logz=False,
-                out_dir_base=r'C:\Data_Python_PL\PLmaps',
+                out_dir_base=r'D:\Data_Python_PL\PLmaps',
                 show_plot=True,
                 amc=None, sn=None, d1=None, d2=None):
     """
@@ -869,7 +872,7 @@ def run_pl_scan_daq(center_x=0, center_y=0, center_f=None,
                 focus_sweep=False, f_size=50,
                 x_size=5, y_size=5, step=1,t_acq=0.1,
                 logz=False,
-                out_dir_base=r'C:\Data_Python_PL\PLmaps',
+                out_dir_base=r'D:\Data_Python_PL\PLmaps',
                 show_plot=True,
                 amc=None, daq=None, ch1=None, ch2=None):
     """
@@ -1612,6 +1615,7 @@ def gohome(amc=None):
         amc = start_attocube()
     for ax in [0,1,2]:
         amc_move(amc=amc,axis=ax,d=0)
+    getposall()
         
 # === Plotting Utilities ===
 
