@@ -1,0 +1,61 @@
+namespace ATSHAMROCKCS {
+    using System;
+
+    public interface IATSHAMROCKCS {
+        uint ShamrockInitialize(string dir);
+        uint ShamrockClose();
+        uint ShamrockGetNumberDevices(ref int _i_nodevices);
+        unsafe uint ShamrockGetFunctionReturnDescription(int _i_error, ref String _sz_description, int _i_maxDescStrLen);
+        uint ShamrockGetSerialNumber (int _i_device, ref String _sz_serial);
+        uint ShamrockEepromGetOpticalParams (int _i_device, ref float _f_focalLength,ref float _f_angularDeviation,ref float _f_focalTilt);
+        uint ShamrockSetGrating(int _i_device, int _i_grating);
+        uint ShamrockGetGrating(int _i_device, ref int _i_grating);
+        uint ShamrockWavelengthReset(int _i_device);
+        uint ShamrockGetNumberGratings(int _i_device, ref int _i_noGratings);
+        uint ShamrockGetGratingInfo(int _i_device, int _i_grating, ref float _f_lines,  ref String _sz_blaze, ref int _i_home, ref int _i_offset);
+        uint ShamrockSetDetectorOffset(int _i_device, int _i_offset);
+        uint ShamrockGetDetectorOffset(int _i_device, ref int _i_offset);
+        uint ShamrockSetDetectorOffsetPort2(int _i_device, int _i_offset);
+        uint ShamrockGetDetectorOffsetPort2(int _i_device, ref int _i_offset);
+        uint ShamrockSetGratingOffset(int _i_device, int _i_grating, int _i_offset);
+        uint ShamrockGetGratingOffset(int _i_device, int _i_grating, ref int _i_offset);
+        uint ShamrockGratingIsPresent(int _i_device, ref int _i_present);
+        uint ShamrockSetTurret(int _i_device, int _i_turret);
+        uint ShamrockGetTurret(int _i_device, ref int _i_turret);
+        uint ShamrockSetWavelength(int _i_device, float _f_wavelength);
+        uint ShamrockGetWavelength(int _i_device, ref float _f_wavelength);
+        uint ShamrockGotoZeroOrder(int _i_device);
+        uint ShamrockAtZeroOrder(int _i_device, ref int _i_atZeroOrder);
+        uint ShamrockGetWavelengthLimits(int _i_device, int _i_grating, ref float _f_min, ref float _f_max);
+        uint ShamrockWavelengthIsPresent(int _i_device, ref int _i_present);
+        uint ShamrockSetAutoSlitWidth(int _i_device, int _i_index, float _f_width);
+        uint ShamrockAutoSlitIsPresent(int _i_device, int _i_index, ref float _f_width);
+        uint ShamrockAutoSlitReset(int _i_device, int _i_index);
+        uint ShamrockAutoSlitIsPresent(int _i_device, ref int _i_present);
+        uint ShamrockSetAutoSlitCoefficients(int _i_device, int _i_index, int _i_x1, int _i_y1, int _i_x2, int _i_y2);
+        uint ShamrockGetAutoSlitCoefficients(int _i_device, int _i_index, ref int _i_x1, ref int _i_y1, ref int _i_x2, ref int _i_y2);
+        uint ShamrockSetShutter(int _i_device, int _i_mode);
+        uint ShamrockGetShutter(int _i_device, ref int _i_mode);
+        uint ShamrockIsModePossible(int _i_device, int _i_mode, ref int _i_present);
+        uint ShamrockShutterIsPresent(int _i_device, ref int _i_present);
+        uint ShamrockSetFilter(int _i_device, int _i_filter);
+        uint ShamrockGetFilter(int _i_device, ref int _i_filter);
+        uint ShamrockGetFilterInfo(int _i_device, int _i_filter,  ref String _sz_info);
+        uint ShamrockInitialize(int device, int _i_filter, string _sz_info);
+        uint ShamrockFilterReset(int _i_device);
+        uint ShamrockFilterIsPresent(int _i_device, ref int _i_present);
+        uint ShamrockSetFlipperMirror(int _i_device, int _i_flipper, int _i_port);
+        uint ShamrockGetFlipperMirror(int _i_device, int _i_flipper, ref int _i_port);
+        uint ShamrockFlipperMirrorReset(int _i_device, int _i_flipper);
+        uint ShamrockFlipperMirrorIsPresent(int _i_device, int _i_flipper, ref int _i_present);
+        uint ShamrockGetCCDLimits(int _i_device, int _i_port, ref float _f_low, ref float _f_high);
+        uint ShamrockSetAccessory(int _i_device, int _i_accessory, int _i_state);
+        uint ShamrockGetAccessoryState(int _i_device, ref int _i_state);
+        uint ShamrockAccessoryIsPresent(int _i_device, ref int _i_present);
+        uint ShamrockSetPixelWidth(int _i_device, float _f_width);
+        uint ShamrockSetNumberPixels(int _i_device, int _i_numberPixels);
+        uint ShamrockGetPixelWidth(int _i_device, ref float _f_width);
+        uint ShamrockGetNumberPixels(int _i_device, ref int _i_noPixels);
+        uint ShamrockGetCalibration(int _i_device, float[] _pf_calibValues, int _i_numberPixels);
+    }
+}

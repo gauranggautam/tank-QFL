@@ -1,4 +1,5 @@
 # Std lib
+# Std lib
 import os, re, time, traceback, builtins
 from datetime import datetime
 from io import StringIO
@@ -23,8 +24,48 @@ except ImportError as e: print(e)
 try: from snAPI.Main import *
 except ImportError as e: print(e)
 
-try: from taiko_driver import TaikoLaser, PicoQuantException
+#try: from taiko_driver import TaikoLaser, PicoQuantException
+#except ImportError as e: print(e)
+
+try: import nidaqmx; from nidaqmx.constants import Edge
 except ImportError as e: print(e)
+
+try: import labview_buttons_v2 as lv
+except ImportError as e: print(e)
+
+try: from pylablib.devices import Thorlabs
+except ImportError as e: print(e)
+
+try: from montana import cryocore
+except ImportError as e: print(e)
+
+
+import os, re, time, traceback, builtins
+from datetime import datetime
+from io import StringIO
+
+# Third-party
+import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib.ticker import MaxNLocator, AutoMinorLocator
+from matplotlib.widgets import Button
+from mpl_toolkits.mplot3d import Axes3D
+import pyvisa
+
+TAB20_COLORS = plt.colormaps['tab20'].colors
+# Hardware-Specific Imports
+uhd_plots = False
+
+try: from attocube import AMC
+except ImportError as e: print(e)
+
+try: from snAPI.Main import *
+except ImportError as e: print(e)
+
+#try: from taiko_driver import TaikoLaser, PicoQuantException
+#except ImportError as e: print(e)
 
 try: import nidaqmx; from nidaqmx.constants import Edge
 except ImportError as e: print(e)
@@ -2257,3 +2298,431 @@ def plot_parameters(xi,yi, xr,yr):
     print(f'ystart= {ys}')
     ye=yi+yr/2
     print(f'yend= {ye}')
+    
+# ==========================================
+# Thorlabs KDC Controller Functions
+# ==========================================
+
+# ==========================================
+# Thorlabs KDC Controller Functions
+# ==========================================
+
+def start_kdc(SN="27257399", kdc=None, force=False):
+    if kdc is not None:
+        return kdc
+    else:
+        try:
+            kdc = Thorlabs.KinesisMotor(SN)
+            kdc.open()
+            if force:
+                print(f"Homing KDC motor SN: {SN}...")
+                # sync=False allows the script to continue running so we can poll
+                kdc.home(force=True, sync=False) 
+                time.sleep(0.2) # Give the motor a moment to start moving
+                
+                # Poll position while homing
+                try:
+                    while kdc.is_moving():
+                        curr_deg = kdc.get_position() / 1919.6418578623391
+                        print(f"Homing... Current Position: {curr_deg:.2f}°", end='\r')
+                        time.sleep(0.05)
+                    print("\nHoming complete.")
+                except Exception:
+                    # Fallback if is_moving behaves as a property
+                    while getattr(kdc, 'is_moving', False):
+                        curr_deg = kdc.get_position() / 1919.6418578623391
+                        print(f"Homing... Current Position: {curr_deg:.2f}°", end='\r')
+                        time.sleep(0.05)
+                    print("\nHoming complete.")
+                    
+            print(f"Connected to KDC motor SN: {SN}")
+            return kdc
+        except Exception as e:
+            print(f"ERROR: Failed to connect to KDC motor: {e}")
+            return None
+
+def kdc_position_deg(kdc=None):
+    kdc_local = False
+    if kdc is None:
+        kdc = start_kdc()
+        kdc_local = True
+        
+    if kdc is None:
+        print("ERROR: KDC motor is not initialized.")
+        return 0.0
+
+    current_steps = kdc.get_position()
+    current_deg = current_steps / 1919.6418578623391
+    
+    if kdc_local and kdc:
+        try:
+            kdc.close()
+        except Exception:
+            pass
+    return current_deg
+
+def kdc_move_deg(deg, kdc=None, showcmd=True):
+    """
+    Moves the Thorlabs KDC rotation mount to the specified angle in degrees.
+    
+    Args:
+        deg (float): Target angle in degrees.
+        kdc (Thorlabs.KinesisMotor, optional): Existing KDC motor instance.
+        showcmd (bool): If True, prints polling status. If False, moves silently.
+    """
+    kdc_local = False
+    if kdc is None:
+        kdc = start_kdc()
+        kdc_local = True
+        
+    if kdc is None:
+        if showcmd: print("ERROR: KDC motor is not initialized.")
+        return
+
+    step = deg * 1919.6418578623391
+    kdc.move_to(step)
+    
+    time.sleep(0.05)
+    
+    # Poll position while moving
+    try:
+        while kdc.is_moving():
+            if showcmd:
+                curr_deg = kdc.get_position() / 1919.6418578623391
+                print(f"Moving... Current Angle: {curr_deg:.2f}° (Target: {deg:.2f}°)", end='\r')
+            time.sleep(0.05)
+            
+        if showcmd:
+            final_deg = kdc.get_position() / 1919.6418578623391
+            print(f"\nMovement complete. Final Angle: {final_deg:.2f}°")
+            
+    except Exception:
+        # Fallback if is_moving behaves as a property
+        while getattr(kdc, 'is_moving', False):
+            if showcmd:
+                curr_deg = kdc.get_position() / 1919.6418578623391
+                print(f"Moving... Current Angle: {curr_deg:.2f}° (Target: {deg:.2f}°)", end='\r')
+            time.sleep(0.05)
+            
+        if showcmd:
+            final_deg = kdc.get_position() / 1919.6418578623391
+            print(f"\nMovement complete. Final Angle: {final_deg:.2f}°")
+
+    if kdc_local and kdc:
+        try:
+            kdc.close()
+        except Exception:
+            pass
+
+
+def run_pl_polarization(start_deg=0, end_deg=360, step_deg=10, 
+                        detector_config=2, out_dir_base=r'D:\Data_Python_PL\Polarization',
+                        show_plot=True, force_home_kdc=False, kdc=None, amc=None, sn=None, d1=None, d2=None):
+    """
+    Performs a polarization-dependent PL measurement by sweeping a Thorlabs rotation mount.
+    Features live real-time plotting and instant data-file saves.
+    """
+    kdc_local = False
+    amc_local = False
+    sn_local = False
+    data_file_handle = None
+
+    try:
+        # === Initialize Devices ===
+        if kdc is None:
+            kdc = start_kdc(force=force_home_kdc)
+            if kdc is None: raise ConnectionError("Failed to start Thorlabs KDC motor.")
+            kdc_local = True
+
+        if amc is None:
+            amc = start_attocube()
+            if amc is None: raise ConnectionError("Failed to start Attocube.")
+            amc_local = True
+
+        if sn is None or d1 is None or d2 is None:
+            sn, d1, d2 = start_apds(detector_config=detector_config)
+            if sn is None: raise ConnectionError("Failed to start APDs.")
+            sn_local = True
+
+        # === Setup Output Directory and Files ===
+        out_dir = output_dir_folder(base_dir=out_dir_base)
+        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+        data_file = os.path.join(out_dir, f'polarization_data_{timestamp}.txt')
+        plot_file = os.path.join(out_dir, f'polarization_plot_{timestamp}.png')
+
+        print(f'Saving polarization data to: {data_file}')
+        data_file_handle = open(data_file, 'w')
+        data_file_handle.write(f'# Polarization PL Measurement - {timestamp}\n')
+        data_file_handle.write('# Req_Angle(deg)\tAct_Angle(deg)\tCount1\tCount2\tTotal\n')
+
+        angles = np.arange(start_deg, end_deg + step_deg, step_deg)
+        actual_angles, ch1_counts, ch2_counts, totals = [], [], [], []
+
+        print("\nStarting polarization sweep...")
+        
+        # === Setup Live Plot ===
+        plt.ion()
+        fig, ax = plt.subplots(figsize=(8, 6))
+        line, = ax.plot([], [], 'bo-', lw=2, label='Total Counts')
+        ax.set_xlabel('Polarizer Angle (deg)')
+        ax.set_ylabel('Counts (cps)')
+        ax.set_title(f'Polarization Dependence | {timestamp}')
+        ax.grid(True)
+        ax.legend(loc='upper right')
+        
+        # Pre-set X axis limits so the plot doesn't jump horizontally
+        ax.set_xlim(start_deg - step_deg, end_deg + step_deg)
+
+        # === Measurement Loop ===
+        for angle in angles:
+            # Move silently, then wait exactly 1 second
+            kdc_move_deg(angle, kdc=kdc, showcmd=False)
+            time.sleep(1.0)  
+            
+            # Take readings
+            act_angle = kdc_position_deg(kdc=kdc)
+            cnt = sn.getCountRates()
+            c1, c2 = cnt[d1], cnt[d2]
+            total = c1 + c2
+
+            actual_angles.append(act_angle)
+            ch1_counts.append(c1)
+            ch2_counts.append(c2)
+            totals.append(total)
+
+            # Write to file and instantly flush the buffer to save it
+            data_file_handle.write(f'{angle:.2f}\t{act_angle:.2f}\t{c1}\t{c2}\t{total}\n')
+            data_file_handle.flush()
+            
+            print(f'Angle: {act_angle:.1f}° | Total Counts: {total}      ', end='\r')
+
+            # Update Live Plot
+            line.set_data(actual_angles, totals)
+            ax.relim()
+            ax.autoscale_view(scalex=False, scaley=True) # Only autoscale Y axis dynamically
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+            plt.pause(0.01)
+
+        print("\nPolarization sweep complete.")
+
+        # === Finalize and Save ===
+        plt.ioff()
+        plt.tight_layout()
+        plt.savefig(plot_file)
+        print(f"Plot saved to: {plot_file}")
+        
+        if show_plot: plt.show()
+        else: plt.close(fig)
+
+        return np.array(actual_angles), np.array(totals)
+
+    except Exception as e:
+        print(f"\nA critical error occurred during polarization scan: {e}")
+        return None, None
+    finally:
+        print("\n--- Cleaning up polarization scan resources ---")
+        if data_file_handle: 
+            data_file_handle.close()
+        if kdc_local and kdc:
+            try: kdc.close(); print("KDC motor closed.")
+            except Exception: pass
+        if sn_local and sn: close_device_all(sn=sn)
+        if amc_local and amc: close_device_all(amc=amc)
+# ==========================================
+# Montana CryoCore Functions
+# ==========================================
+
+DEFAULT_CRYO_IP = "192.168.0.2"
+_global_cryo = None
+
+def start_cryo(ip_address=DEFAULT_CRYO_IP, cryo=None):
+    global _global_cryo
+    if cryo is not None: return cryo
+    if _global_cryo is not None: return _global_cryo
+    try:
+        _global_cryo = cryocore.CryoCore(ip_address)
+        print(f"Connected to Montana CryoCore at {ip_address}")
+        return _global_cryo
+    except Exception as e:
+        print(f"ERROR: Failed to connect to CryoCore: {e}")
+        return None
+
+def _get_cryo_val(res):
+    return res[1] if isinstance(res, tuple) else res
+
+def cryo_state(cryo=None):
+    c = start_cryo(cryo=cryo)
+    if not c: return "Unknown"
+    try: return _get_cryo_val(c.get_system_state())
+    except Exception: return "Unknown"
+
+def cryo_goal(cryo=None):
+    c = start_cryo(cryo=cryo)
+    if not c: return "Unknown"
+    try: return _get_cryo_val(c.get_system_goal())
+    except Exception: return "Unknown"
+
+def cryo_ensure_ready(cryo=None, timeout=30):
+    c = start_cryo(cryo=cryo)
+    if not c: return False
+    goal, state = cryo_goal(c), cryo_state(c)
+    if goal in ['None', None] and state == 'Ready': return True
+        
+    print(f"System busy (Goal: {goal}, State: {state}). Aborting current goal...")
+    try: c.abort_goal()
+    except Exception as e: print(f"Error aborting goal: {e}")
+        
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if cryo_state(c) == 'Ready':
+            print("System is now Ready.")
+            return True
+        time.sleep(1)
+    print("WARNING: Timed out waiting for system to reach 'Ready' state.")
+    return False
+
+def cryo_pullvac(cryo=None):
+    c = start_cryo(cryo=cryo)
+    if not c: return
+    if cryo_goal(c) == 'PullVacuum':
+        print("System is already pulling vacuum.")
+        return
+    if cryo_ensure_ready(c):
+        try:
+            c.pull_vacuum()
+            print("Vacuum pull initiated.")
+        except Exception as e:
+            print(f"Error pulling vacuum: {e}")
+
+def cryo_vent(cryo=None):
+    c = start_cryo(cryo=cryo)
+    if not c: return
+    if cryo_goal(c) == 'Vent':
+        print("System is already venting.")
+        return
+    if cryo_ensure_ready(c):
+        try:
+            c.vent()
+            print("Venting initiated.")
+        except Exception as e:
+            print(f"Error venting: {e}")
+
+def cryo_set_temp(cryo=None, target_temp=10):
+    c = start_cryo(cryo=cryo)
+    if not c: return
+    try:
+        c.set_platform_target_temperature(target_temp)
+        print(f"Platform target temperature set to: {target_temp} K")
+    except Exception as e:
+        print(f"Error setting platform temperature: {e}")
+
+def cryo_start_cooldown(cryo=None, target_temp=10, bakeout=False, n2purge=False):
+    c = start_cryo(cryo=cryo)
+    if not c: return
+    if cryo_goal(c) not in ['Cooldown', 'None', None]:
+        cryo_ensure_ready(c)
+
+    try:
+        if hasattr(c, 'set_platform_bakeout_enabled'):
+            try: c.set_platform_bakeout_enabled(bakeout)
+            except TypeError: c.set_platform_bakeout_enabled = bakeout
+            
+        if hasattr(c, 'set_dry_nitrogen_purge_enabled'):
+            try: c.set_dry_nitrogen_purge_enabled(n2purge)
+            except TypeError: c.set_dry_nitrogen_purge_enabled = n2purge
+
+        c.set_platform_target_temperature(target_temp)
+        print(f"Platform target temperature set to: {target_temp} K")
+        
+        if cryo_goal(c) != 'Cooldown':
+            c.cooldown()
+            print(f"Cooldown sequence initiated. (Bakeout: {bakeout}, N2 Purge: {n2purge})")
+        else:
+            print("System is already in Cooldown mode. Target temperature updated.")
+    except Exception as e:
+        print(f"Error starting cooldown: {e}")
+
+def cryo_get_temp_p1(cryo=None):
+    c = start_cryo(cryo=cryo)
+    if not c: return None
+    try: return float(_get_cryo_val(c.get_platform_temperature()))
+    except Exception as e:
+        print(f"Error reading platform temperature: {e}")
+        return None
+
+def cryo_get_temp_u1(cryo=None):
+    c = start_cryo(cryo=cryo)
+    if not c: return None
+    try: return float(_get_cryo_val(c.get_user1_temperature()))
+    except Exception as e:
+        print(f"Error reading user 1 temperature: {e}")
+        return None
+
+def cryo_waitfortemp_p1(req_temp, cryo=None, tolerance=1.0, poll_interval=2):
+    c = start_cryo(cryo=cryo)
+    if not c: return
+    print(f"Waiting for platform temperature to reach {req_temp} K (tolerance: ±{tolerance}K)...")
+    while True:
+        current_temp = cryo_get_temp_p1(c)
+        if current_temp is not None:
+            diff = abs(current_temp - req_temp)
+            print(f"Current Platform Temp: {current_temp:.2f} K (Target: {req_temp} K) | State: {cryo_state(c)}", end='\r')
+            if diff <= tolerance:
+                print(f"\nPlatform reached target temperature: {current_temp:.2f} K")
+                break
+        time.sleep(poll_interval)
+
+def cryo_waitfortemp_u1(req_temp, cryo=None, tolerance=1.0, poll_interval=2):
+    c = start_cryo(cryo=cryo)
+    if not c: return
+    print(f"Waiting for User 1 temperature to reach {req_temp} K (tolerance: ±{tolerance}K)...")
+    while True:
+        current_temp = cryo_get_temp_u1(c)
+        if current_temp is not None:
+            diff = abs(current_temp - req_temp)
+            print(f"Current User 1 Temp: {current_temp:.2f} K (Target: {req_temp} K) | State: {cryo_state(c)}", end='\r')
+            if diff <= tolerance:
+                print(f"\nUser 1 reached target temperature: {current_temp:.2f} K")
+                break
+        time.sleep(poll_interval)
+
+def cryo_waitforvac(target_pressure=0.1, cryo=None, timeout_s=1800, poll_interval=2):
+    c = start_cryo(cryo=cryo)
+    if not c: return False
+    print("Waiting for vacuum target...")
+    start_time = time.time()
+    while time.time() - start_time < timeout_s:
+        try:
+            pressure = _get_cryo_val(c.get_sample_chamber_pressure())
+            state = cryo_state(c)
+            if pressure is not None:
+                print(f"Current Pressure: {pressure:.4f} (Target: {target_pressure}) | State: {state}", end='\r')
+                if pressure <= target_pressure:
+                    print(f"\nVacuum target reached: {pressure:.4f}")
+                    return True
+        except Exception:
+            pass
+        time.sleep(poll_interval)
+    print("\nWARNING: Timeout reached waiting for vacuum.")
+    return False
+
+def cryo_waitforvent(vent_pressure_threshold=700, cryo=None, timeout_s=600, poll_interval=2):
+    c = start_cryo(cryo=cryo)
+    if not c: return False
+    print("Waiting for system to vent...")
+    start_time = time.time()
+    while time.time() - start_time < timeout_s:
+        try:
+            pressure = _get_cryo_val(c.get_sample_chamber_pressure())
+            state = cryo_state(c)
+            if pressure is not None:
+                print(f"Current Pressure: {pressure:.1f} (Target: >={vent_pressure_threshold}) | State: {state}", end='\r')
+                if pressure >= vent_pressure_threshold:
+                    print(f"\nVenting complete. Current pressure: {pressure:.1f}")
+                    return True
+        except Exception:
+            pass
+        time.sleep(poll_interval)
+    print("\nWARNING: Timeout reached waiting for vent.")
+    return False

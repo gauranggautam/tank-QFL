@@ -1,0 +1,1 @@
+int ShamrockParams(int device);

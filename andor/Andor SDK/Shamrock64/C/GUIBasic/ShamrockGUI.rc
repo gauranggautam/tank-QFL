@@ -1,0 +1,73 @@
+//------------------------------------------------------------------------------
+//  PROJECT:		32-bit Driver Example Code ---- Full Vertical Binning
+//
+//  Copyright 1998. All Rights Reserved
+//
+//  FILE:				ImageWindw.c
+//  AUTHOR:			Paul McKernon
+//
+//  OVERVIEW:		This Project shows how to set up the Andor MCD to take a single
+//							FVB acquisition and display it on the screen. It will
+//							familiarise you with using the Andor MCD driver library.
+//------------------------------------------------------------------------------
+
+#include "ShamrockGUICommon.h"
+
+#if !defined (WORKSHOP_INVOKED)
+#include <windows.h>
+#endif
+
+#include "winver.h"
+
+IDI_APPICON ICON "ShamrockGUI.ICO"
+
+
+SIMPLE ACCELERATORS MOVEABLE PURE 
+BEGIN
+    "Q",            IDM_EXIT,               VIRTKEY, CONTROL
+END
+
+
+VS_VERSION_INFO VERSIONINFO 
+FILEVERSION 2,0,0,0
+PRODUCTVERSION 2,0,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0xaL
+FILEOS 0x10001L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+{
+ BLOCK "StringFileInfo"
+ {
+  BLOCK "040904e4"
+  {
+   VALUE "CompanyName", "Andor Technology Ltd\0"
+   VALUE "FileDescription", "32-bit PCI Driver Example\0"
+   VALUE "FileVersion", "Version 2.0\0"
+   VALUE "InternalName", "Example\0"
+   VALUE "LegalCopyright", "Copyright \251 Andor Tecnology Ltd. 1998\0"
+   VALUE "LegalTrademarks", "\0"
+   VALUE "OriginalFilename", "\0"
+   VALUE "ProductName", "Example\0"
+   VALUE "ProductVersion", "\0"
+   VALUE "ProductVersion", "Version 2.0\0"
+  }
+
+ }
+
+ BLOCK "VarFileInfo"
+ {
+  VALUE "Translation", 0x409, 1252
+ }
+
+}
+
+
+STRINGTABLE 
+{
+ IDS_APPNAME, "Andor Technology  SHAMROCK"
+ IDS_DESCRIPTION, "Shamrock C GUI Example"
+}
+
+ANDORTCH BITMAP ANDORTCH.BMP
+

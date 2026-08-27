@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="yes"?>
+<MiabConfiguration>
+	<MiabSystem name="MiabSystem_1">
+		<Logging level="Debug"/> <!-- Debug|Info|Warn|Error -->
+		<OperationMode value="sequential"/>
+		<InternalEfficiencyCorrection value="false"/>
+		<RadiometricCorrection value="false"/>
+		<BlazeEfficiencyCorrection value="false"/>
+		<MatchOrderJunctions value="false"/>
+		<ChannelHeight value="5"/>   	<CalibrationFiles dir="$ConfigDir\Calibration"/>
+
+		<InstrumentFiles dir="$ConfigDir\Instrument">
+			<PersistentVariables name="PERAND5000.BIN"/>
+			<OpticalConstants name="OCGRAMAN.DAT" algorithm="4"/>
+			<SpcCorrConstants name="spcAND5000.DAT"/>
+			<RadCorrConstants name="RADAND5000.MCH"/>
+			<RadRefPerChannel name="RDIAND5000.DAT"/>
+			<OrderInfoFile name="ORDAND5000.DAT"/>
+			<InternalSpcCorrConstants name="MCHAND5000.DAT"/>
+			<CalibrationConstants name="CALATCOM.DAT"/>
+			<OffsetConstants name="OffandRaman.dat"/>
+		</InstrumentFiles>
+
+		<ModelSpecificConstants model="ComMechelle">
+			<Constant name="LowestSpectralOrderInSpc" value="20"/>
+			<Constant name="HighestSpectralOrderInSpc" value="45"/>
+			<Constant name="MaxNrOfDataPoints" value="50000"/>
+			<Constant name="OrderWavelengthConstant" value="22.071255"/>
+			<Constant name="LowestPossibleWavelength" value="0.1"/>
+			<Constant name="HighestPossibleWavelength" value="2.1"/>
+			<Constant name="MaxChannelHeight" value="5"/>
+			<Constant name="VerticalOffsetOfCentralWavelength" value="0.0"/>
+			<Constant name="NominalGratingConstant" value="12.6582278481"/>
+			<Constant name="NominalAngleOfIncidence" value="1.08210413624"/>
+			<Constant name="NominalBlazeAngle" value="1.08210413624"/>
+			<Constant name="NominalGrooveEdge" value="0.5"/>
+			<Constant name="DefaultWavelengthCalibrationOrder" value="40"/>
+			<Constant name="DefaultCalibrationWavelength" value="0.5268"/>
+			<Constant name="NrOfBackgroundSpectralChannels" value="10"/>
+			<Constant name="BlazeVariationCorrectionFlag" value="0"/>
+			<Constant name="OrderDependenceFlag" value="0"/>
+			<Constant name="SpectralImageOrientation" value="1"/>
+			<Constant name="NrOfOverlappingChannelsInOrderChange" value="5"/>
+			<Constant name="WavelengthIterationAccuracy" value="0.005"/>
+		</ModelSpecificConstants>
+
+		<MiabCamera type="miab.camera.fgcontrolled">
+			<SensorMargins ColLeft="4" ColRight="3" RowLow="2" RowHigh="1"/>
+			<SensorTemperature celcius="15"/>
+			<PixelSizeInMicrons value="13.0"/>
+			<OperationMode value="parallel"/>
+			<Background reduce="true" time_sensitive="true" record_on_startup="0"/>
+			<CheckSaturation value="false"/>
+			<FrameMerge chosen_algorithm="Sum" counts="0">
+				<MergeAlgorithm algorithm="Average" src="camera.dll" decorated_name="_mergeAlgorithmAverage@20"/>
+				<MergeAlgorithm algorithm="Sum" src="camera.dll" decorated_name="_mergeAlgorithmSum@20"/>
+			</FrameMerge>
+			<ExpTimes>
+				<ExpTime value="100ms"/>
+			</ExpTimes>
+			
+			<CameraAttributes>
+			</CameraAttributes>
+		</MiabCamera>
+		
+		<MiabFrameGrabber 
+			name="FrameGrabber_1" 
+			type="andor.framegrabber.generic"/>
+	</MiabSystem>
+
+</MiabConfiguration>
+
+

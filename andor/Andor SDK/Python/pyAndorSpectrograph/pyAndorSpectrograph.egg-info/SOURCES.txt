@@ -1,0 +1,12 @@
+README.rst
+pyproject.toml
+setup.py
+pyAndorSpectrograph/__init__.py
+pyAndorSpectrograph/_version.py
+pyAndorSpectrograph/spectrograph.py
+pyAndorSpectrograph.egg-info/PKG-INFO
+pyAndorSpectrograph.egg-info/SOURCES.txt
+pyAndorSpectrograph.egg-info/dependency_links.txt
+pyAndorSpectrograph.egg-info/not-zip-safe
+pyAndorSpectrograph.egg-info/requires.txt
+pyAndorSpectrograph.egg-info/top_level.txt

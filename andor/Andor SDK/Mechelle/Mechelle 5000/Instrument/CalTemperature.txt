@@ -1,0 +1,16 @@
+//calibrated temperature 
+26.9
+//x change 
+-0.968
+//y change 
+-2.298
+//x adjustment 
+0.0
+//y adjustment 
+0.0
+//CrossTalkPeakWidth 
+7
+//PixelResidual 
+3
+//Smooth 
+0
