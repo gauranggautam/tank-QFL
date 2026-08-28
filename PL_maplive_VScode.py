@@ -11,7 +11,7 @@ import os
 stpp=0.1
 xstpp,ystpp,fstpp=stpp,stpp,stpp
 
-logf=True
+logf=False
 invxy=False
 # === Load data ===
 def load_data(filepath):
