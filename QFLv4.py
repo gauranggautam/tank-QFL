@@ -2305,15 +2305,6 @@ def plot_parameters(xi,yi, xr,yr):
     print(f'ystart= {ys}')
     ye=yi+yr/2
     print(f'yend= {ye}')
-    
-# ==========================================
-# Thorlabs KDC Controller Functions
-# ==========================================
-
-# ==========================================
-# Thorlabs KDC Controller Functions
-# ==========================================
-
 def start_kdc(SN="27257399", kdc=None, force=False):
     if kdc is not None:
         return kdc
@@ -2347,7 +2338,6 @@ def start_kdc(SN="27257399", kdc=None, force=False):
         except Exception as e:
             print(f"ERROR: Failed to connect to KDC motor: {e}")
             return None
-
 def kdc_position_deg(kdc=None):
     kdc_local = False
     if kdc is None:
@@ -2367,7 +2357,6 @@ def kdc_position_deg(kdc=None):
         except Exception:
             pass
     return current_deg
-
 def kdc_move_deg(deg, kdc=None, showcmd=True):
     """
     Moves the Thorlabs KDC rotation mount to the specified angle in degrees.
@@ -2420,8 +2409,6 @@ def kdc_move_deg(deg, kdc=None, showcmd=True):
             kdc.close()
         except Exception:
             pass
-
-
 def run_pl_polarization(start_deg=0, end_deg=360, step_deg=10, 
                         detector_config=2, out_dir_base=r'D:\Data_Python_PL\Polarization',
                         show_plot=True, force_home_kdc=False, kdc=None, amc=None, sn=None, d1=None, d2=None):
@@ -2536,13 +2523,8 @@ def run_pl_polarization(start_deg=0, end_deg=360, step_deg=10,
             except Exception: pass
         if sn_local and sn: close_device_all(sn=sn)
         if amc_local and amc: close_device_all(amc=amc)
-# ==========================================
-# Montana CryoCore Functions
-# ==========================================
-
 DEFAULT_CRYO_IP = "192.168.0.2"
 _global_cryo = None
-
 def start_cryo(ip_address=DEFAULT_CRYO_IP, cryo=None):
     global _global_cryo
     if cryo is not None: return cryo
@@ -2780,7 +2762,7 @@ def get_peak_intensity(image_array):
     return max_val, max_coords, gray_img
 
 def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
-                           camera_serial="11484", exposure_ms=200, 
+                           camera_serial="11484", exposure_ms=10, 
                            out_dir_base=r'D:\Data_Python_PL\Camera',
                            move_to_best=True, post_sweep_live_feed=True,
                            amc=None):
