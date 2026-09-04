@@ -1,3 +1,4 @@
 # %%
 from pyHegel.commands import *
-%run QFLv4.py
+run QFLv4
+# %%

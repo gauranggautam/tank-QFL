@@ -1,10 +1,7 @@
-# %% Spectro Full
-from pyHegel.commands import *
 import os 
 import time
 import matplotlib.pyplot as plt
 
-# %%
 def start_spectro(spectro_set_cw=484, shutter_init=True,waitfortemp=True,showrange=True):
     
     spectro = instruments.andor_kymera()
@@ -69,59 +66,3 @@ def take_spectrum(bg=True, vbg=None,
         return v[1]
     else:
         return v
-
-# %% init spectro and camera  
-spectro = instruments.andor_kymera()
-camera = instruments.andor_iDus(spectro_instr=spectro,cooler_temp=-80,shutter_init=True)
-camera.wait_for_cooler_stable(-80)
-set(spectro.wavelength_nm, 484)
-camera.conf(read_mode='full_vertical_binning',exposure_time=5,acq_mode="accumulate", acc_N=2)
-set(camera.cosmic_filter_en, True)
-minw = int(get(spectro.sensor_wavelengths_nm)[0])
-maxw = int(get(spectro.sensor_wavelengths_nm)[-1])
-print(f"Current wavelength range : {minw}nm to {maxw}nm")
-vbg=None
-
-# %%
-#Take BG and save as vbg
-set(camera.shutter, False)
-time.sleep(1)
-vbg = get(camera.readval)
-set(camera.shutter, True)
-
-
-
-# %% Single acq 5sX2 cosmic true shutter on w/wo/ bg
-camera.conf(read_mode='full_vertical_binning',exposure_time=5,acq_mode="accumulate", acc_N=2)
-bg =True
-if bg:
-   if vbg is None:
-       set(camera.shutter, False)
-       time.sleep(1)
-       vbg = get(camera.readval)
-       set(camera.shutter, True)
-       time.sleep(1)
-   v = get(camera.readval, bkg_rem=vbg[1])
-else:
-   v = get(camera.readval)
-#plot
-_, ax = plt.subplots()
-ax.plot(v[0], v[1]) #label=f'{}')
-ax.set_xlim(np.min(v[0]), np.max(v[0]))
-ax.set_xlabel('Wavelength (nm)')
-ax.set_ylabel('Counts (Arb.)')
-ax.grid(True)
-ax.set_title('PL Spectrum')
-plt.show()
-ax.legend(loc='upper right')
-
-#%% Continious mode:
-camera.conf(read_mode='full_vertical_binning',exposure_time=1,acq_mode="single_scan")
-set(camera.exposure_time, 1)
-scope(camera.readval)
-
-
-#%% Remove
-unload(camera)
-unload(spectro)
-#%%

@@ -1,9 +1,9 @@
-# Std lib
-# Std lib
+# %%
+from pyHegel.commands import *
+
 import os, re, time, traceback, builtins
 from datetime import datetime
 from io import StringIO
-
 # Third-party
 import numpy as np
 import matplotlib as mpl
@@ -17,7 +17,7 @@ import pyvisa
 TAB20_COLORS = plt.colormaps['tab20'].colors
 # Hardware-Specific Imports
 uhd_plots = False
-
+#from andor import *
 try: from attocube import AMC
 except ImportError as e: print(e)
 
@@ -172,7 +172,7 @@ def add_stop_button(fig, running_flag):
     return stop_button
 # Hardware control functions
 # Laser
-def start_laser(power=None, cw=True, softlock=False, engaged=False, close=False, read_power=False):
+def set_laser(power=None, cw=True, softlock=False, engaged=False, close=False, read_power=False):
     """
     Controls and manages a Taiko laser connection.
     
@@ -190,35 +190,35 @@ def start_laser(power=None, cw=True, softlock=False, engaged=False, close=False,
     """
     laser = None
     try:
-        laser = TaikoLaser()
-        laser.open()
-        print(f"Connected to: {laser.get_identity()}")
+        laser = instruments.picoQuant.PicoQuant_Taiko_PDL_M1()
+        #print(f"Connected to: {laser.get_identity()}")
 
         if close:
             print("Closing laser: Setting power to 0 and softlocking...")
-            laser.cw_power_permille = 0
-            laser.softlock = True
+            set(laser.cw_power_permille, 0)
+            set(laser.softlock_en, True)
             print("Laser is now softlocked (power at 0).")
-            laser.close()
+            unload(laser)
             return None
 
-        if softlock:
-            laser.softlock = True
-            print(f"Softlock is now: {laser.softlock} (Laser ENABLED)")
+        
+        set(laser.softlock_en, softlock)
+        print(f"Softlock is now: {get(laser.softlock_en)} (Laser ENABLED)")
 
         if power is not None:
             # Convert percentage (e.g., 32.5) to permille (e.g., 325)
             permille_power = int(power * 10)
             print(f"\nSetting CW power to {power}%...")
-            laser.cw_power_permille = permille_power
-            print(f"CW power is now: {laser.cw_power_permille} / 1000")
+            set(laser.cw_power_permille, permille_power)
+            print(f"CW power is now: {get(laser.cw_power_permille)} / 1000")
+            set(laser.softlock_en, False)
 
         if cw:
-            laser.laser_mode = 'cw'
+            set(laser.laser_mode, "cw")
 
         if read_power:
             # Display current power as a percentage
-            current_power_permille = laser.cw_power_permille
+            current_power_permille = get(laser.cw_power_permille)
             current_power_percent = current_power_permille / 10
             print(f"Current CW power is: {current_power_percent:.1f}% ({current_power_permille} / 1000)")
 
@@ -226,6 +226,7 @@ def start_laser(power=None, cw=True, softlock=False, engaged=False, close=False,
         print(f"An error occurred: {e}")
         if 'laser' in locals() and laser:
             laser.close()
+            unload(laser)
         return None
 
     if engaged:
@@ -235,8 +236,9 @@ def start_laser(power=None, cw=True, softlock=False, engaged=False, close=False,
         print("Laser connection closed.")
         if 'laser' in locals() and laser:
             laser.close()
+            unload(laser)
         return None
-def start_apds(detector_config=1, read_counts=False, graph_counts=False):
+def start_apds(detector_config=2, read_counts=False, graph_counts=False):
     """
     Initializes the MH150, and optionally reads or graphs count rates.
 
@@ -258,7 +260,12 @@ def start_apds(detector_config=1, read_counts=False, graph_counts=False):
     try:
         # --- Initialize snAPI Detector ---
         sn = snAPI()
+        #sn.closeDevice(allDevices=True)
+        #sn = snAPI()
+        #sn.exitAPI()
+        #sn = snAPI()
         sn.getDevice("1043897") # Register the device by serial number.
+        
 
         if not sn.initDevice():
             raise ConnectionError('MH150 device initialization failed.')
@@ -293,7 +300,7 @@ def start_apds(detector_config=1, read_counts=False, graph_counts=False):
                 ax.set_xlabel('Elapsed Time (s)'); ax.set_ylabel('Counts (cps)')
                 line1, = ax.plot([], [], 'r.-', label=f'Channel {d1}')
                 line2, = ax.plot([], [], 'b.-', label=f'Channel {d2}')
-                line_total, = ax.plot([], [], 'g.-', label='Total')
+                #line_total, = ax.plot([], [], 'g.-', label='Total')
                 ax.legend(loc='upper left')
                 plt.show(block=False)
 
@@ -309,7 +316,7 @@ def start_apds(detector_config=1, read_counts=False, graph_counts=False):
 
                     line1.set_data(times, counts1)
                     line2.set_data(times, counts2)
-                    line_total.set_data(times, totals)
+                    #line_total.set_data(times, totals)
                     
                     ax.relim(); ax.autoscale_view()
                     fig.canvas.draw(); fig.canvas.flush_events()
@@ -336,6 +343,7 @@ def start_apds(detector_config=1, read_counts=False, graph_counts=False):
         if sn is not None:
              close_device_all(sn=sn)
         return None, None, None
+
 def start_daq(device='Dev1',ch1='PFI8', ch2='PFI9',read_counts=False, graph_counts=False, bin=0.1):
     PFI_CH1 = f"/{device}/{ch1}"
     PFI_CH2 = f"/{device}/{ch2}"
@@ -457,11 +465,11 @@ def start_attocube(amc_address='amc100num-a01-0248.local'):
 def amc_disable():
     amc= start_attocube()
     for axis in [0, 1, 2]:
-        amc.control.setControlOutput(axis, False)
+        #amc.control.setControlOutput(axis, False)
         amc.control.setControlMove(axis, False)
         print(f"Disabled: Axis {axis}")
     amc.close()
-def close_device_all(sn=None, amc=None,showcmd=True, daq=None, t_ch1=None, t_ch2=None):
+def close_device_all(sn=None, amc=None,showcmd=True, daq=None, t_ch1=None, t_ch2=None, spectro=None, camera=None):
     try:
         if amc:
             amc.close()
@@ -470,6 +478,7 @@ def close_device_all(sn=None, amc=None,showcmd=True, daq=None, t_ch1=None, t_ch2
         if sn:
             sn.closeDevice(allDevices=True)
             sn.exitAPI()
+            time.sleep(3)
             if showcmd:
                 print("MH150 closed.")
         if daq:
@@ -478,7 +487,11 @@ def close_device_all(sn=None, amc=None,showcmd=True, daq=None, t_ch1=None, t_ch2
             if t_ch2:
                 t_ch2.stop()
             if showcmd:
-                print("DAQ closed.")
+                print("DAQ closed.") 
+        if camera is not None:
+            unload(camera)
+        if spectro is not None:
+            unload(spectro)
     except:
         print("Nothing to close.")
         return None
@@ -630,6 +643,7 @@ def run_pl_scan(center_x=None, center_y=None, center_f=None,
                 logz=False,
                 out_dir_base=r'D:\Data_Python_PL\PLmaps',
                 show_plot=True,
+                waits=0,
                 amc=None, sn=None, d1=None, d2=None):
     """
     Performs a 2D photoluminescence scan. Manages its own device lifecycle
@@ -720,6 +734,7 @@ def run_pl_scan(center_x=None, center_y=None, center_f=None,
                 amc.move.setControlTargetPosition(0, int(x * 1000)); wait_until_stable(amc, axis=0)
 
                 x_act, y_act = amc.move.getPosition(0)/1000, amc.move.getPosition(2)/1000
+                time.sleep(waits)
                 cnt = sn.getCountRates()
                 total = cnt[d1] + cnt[d2]
 
@@ -1664,7 +1679,70 @@ def gohome(amc=None):
     for ax in [0,1,2]:
         amc_move(amc=amc,axis=ax,d=0)
     getposall()
+def start_spectro(spectro_set_cw=484, shutter_init=True,waitfortemp=True,showrange=True):
+    
+    spectro = instruments.andor_kymera()
+    set(spectro.wavelength_nm, spectro_set_cw)
+    camera = instruments.andor_iDus(spectro_instr=spectro,cooler_temp=-80,shutter_init=shutter_init)
+    camera.conf(read_mode='full_vertical_binning',exposure_time=5,acq_mode="accumulate", acc_N=2)
+    set(camera.cosmic_filter_en, True)
+    vbg=None
+    if waitfortemp:
+        camera.wait_for_cooler_stable(-80)
+    minw = int(get(spectro.sensor_wavelengths_nm)[0])
+    maxw = int(get(spectro.sensor_wavelengths_nm)[-1])
+    if showrange:
+        print(f"Current wavelength range : {minw}nm to {maxw}nm")
+    return spectro, camera, minw, maxw
         
+def close_spectro(spectro=None,camera=None):
+    if camera is not None:
+        unload(camera)
+    if spectro is not None:
+        unload(spectro)
+
+def take_spectrum_bg(camera=None):
+    set(camera.shutter, False)
+    time.sleep(1)
+    vbg = get(camera.readval)
+    set(camera.shutter, True)
+    return vbg
+
+def take_spectrum(bg=True, vbg=None,
+                  read_mode='full_vertical_binning',
+                  exposure_time=5,
+                  acq_mode="accumulate",
+                  acc_N=2,
+                  data_only=False,
+                  show_plot=True,
+                  camera=None,spectro=None):
+    if camera is None:
+        spectro, camera, minw, maxw = start_spectro()
+    camera.conf(read_mode=read_mode,exposure_time=exposure_time,acq_mode=acq_mode, acc_N=acc_N)
+    if bg:
+        if vbg is None:
+            set(camera.shutter, False)
+            time.sleep(1)
+            vbg = get(camera.readval)
+            set(camera.shutter, True)
+            time.sleep(1)
+        v = get(camera.readval, bkg_rem=vbg[1])
+    else:
+        v = get(camera.readval)
+    #plot
+    if show_plot:
+        _, ax = plt.subplots()
+        ax.plot(v[0], v[1]) #label=f'{}')
+        ax.set_xlim(np.min(v[0]), np.max(v[0]))
+        ax.set_xlabel('Wavelength (nm)')
+        ax.set_ylabel('Counts (Arb.)')
+        ax.grid(True)
+        ax.set_title('PL Spectrum')
+        plt.show()
+    if data_only:
+        return v[1]
+    else:
+        return v
 # === Plotting Utilities ===
 
 def _set_tab20_cycle(ax):
@@ -1703,7 +1781,7 @@ def plot_spectrum(input, compare=False, fig=11, id='Plot'):
 
     ax.set_title('PL Spectrum compare' if compare else os.path.basename(input))
     ax.legend(loc='upper right')
-def plot_plmap(fpath, mode='custom', flog=False, xi=0, yi=1, zi=2, 
+def plot_plmap(fpath, mode='vscode', flog=False, xi=0, yi=1, zi=2, 
                id='Plot', invxy=False, force1d=False, encoding='latin1'):
     """
     Plots a photoluminescence (PL) map from a text data file.
@@ -2958,3 +3036,4 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
             except AttributeError: pass
 
     return best_f
+# %%
