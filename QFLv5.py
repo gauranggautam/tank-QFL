@@ -1,6 +1,6 @@
 # %%
-from pyHegel import start_pyHegel
-start_pyHegel()
+# from pyHegel import start_pyHegel
+# start_pyHegel()
 
 import os, re, time, traceback, builtins
 from datetime import datetime
@@ -75,51 +75,6 @@ try: import labview_buttons_v2 as lv
 except ImportError as e: print(e)
 
 
-# LabView control imports
-#         "btn0",  # scroll
-#         "btn1",   #scollup
-#         "btn2",   #apdswitch
-#         "btn3",   #filterwheel
-#         "btn4",   #FW450to420
-#         "btn5",   #Detector
-#         "btn6",   #D:APDtoSpectro
-#         "btn7",   #AcquireAndor(set_settings)
-#         "btn8",   #D:SpectrotoAPD
-#         "btn9",   #FW420to450
-    #     "btn10",  
-
-# LabView controls
-def acq_andor(): #Working
-    lv.focus_maximiser()
-    lv.click_scroll(name="btn1", times=50, delay=0.01)
-    lv.click_scroll(name="btn0", times=38, delay=0.01)
-    lv.click_button(name="btn2", move_duration=0.1) #apds off
-    time.sleep(0.1)
-    lv.click_button(name="btn3", move_duration=0.1) #FW
-    time.sleep(0.1)
-    lv.click_button(name="btn4", move_duration=0.1) #FW450t0420
-    time.sleep(0.1)
-    #lv.click_button(name="btn5", move_duration=0.1) #DetectorSwitch
-    #time.sleep(0.1)
-    #lv.click_button(name="btn6", move_duration=0.1) #D toSpectro
-    #time.sleep(8)
-    detector_switch(moveto="spectro")
-    lv.click_button(name="btn7", move_duration=0.1) #Andoracq
-    #return lv
-def revert_from_andor(): #Workring
-    detector_switch(moveto="apd")
-    lv.focus_maximiser()
-    #lv.click_button(name="btn5", move_duration=0.1) #DetectorSwitch
-    #time.sleep(0.1)
-    #lv.click_button(name="btn8", move_duration=0.1) #D toAPDs
-    #time.sleep(8)
-    lv.click_button(name="btn3", move_duration=0.1) #FW
-    time.sleep(0.1)
-    lv.click_button(name="btn9", move_duration=0.1) #FW420t0450
-    time.sleep(0.1)
-    lv.click_button(name="btn2", move_duration=0.1)#apds back-on
-    #return lv
-# Plotting scale for 4K displays
 def set_4k():
     # Scale plots for 4K resolution
     mpl.rcParams['figure.dpi'] = 200      # Increase DPI
@@ -172,8 +127,8 @@ def add_stop_button(fig, running_flag):
     # Return the button so it's not garbage-collected
     return stop_button
 # Hardware control functions
-# Laser
-def set_laser(power=None, cw=True, softlock=False, engaged=False, close=False, read_power=False):
+# Laser pm1 = instruments.thorlabs_power_meter('USB0::0x1313::0x8079::P1005280::0') power,etre
+def set_laser(power, laser=None, cw=True, softlock=None, engaged=False, close=False, read_power=False):
     """
     Controls and manages a Taiko laser connection.
     
@@ -189,56 +144,22 @@ def set_laser(power=None, cw=True, softlock=False, engaged=False, close=False, r
                                 Defaults to False.
         read_power (bool, optional): Reads and prints the current CW power. Defaults to False.
     """
-    laser = None
-    try:
+    if laser is None:
         laser = instruments.picoQuant.PicoQuant_Taiko_PDL_M1()
         #print(f"Connected to: {laser.get_identity()}")
-
-        if close:
-            print("Closing laser: Setting power to 0 and softlocking...")
-            set(laser.cw_power_permille, 0)
-            set(laser.softlock_en, True)
-            print("Laser is now softlocked (power at 0).")
-            unload(laser)
-            return None
-
-        
+    if power is not None:
+        print(f"\nSetting CW power to {power}%...")
+        pwr=power*10
+        set(laser.cw_power_permille, int(pwr))
+        print(f"CW power is now: {power}%")
+    if softlock is not None:
         set(laser.softlock_en, softlock)
-        print(f"Softlock is now: {get(laser.softlock_en)} (Laser ENABLED)")
+        print(f"Laser softlock state : {get(laser.softlock_en)}.")
 
-        if power is not None:
-            # Convert percentage (e.g., 32.5) to permille (e.g., 325)
-            permille_power = int(power * 10)
-            print(f"\nSetting CW power to {power}%...")
-            set(laser.cw_power_permille, permille_power)
-            print(f"CW power is now: {get(laser.cw_power_permille)} / 1000")
-            set(laser.softlock_en, False)
+    if cw:
+        set(laser.laser_mode, "cw")    
+    return laser
 
-        if cw:
-            set(laser.laser_mode, "cw")
-
-        if read_power:
-            # Display current power as a percentage
-            current_power_permille = get(laser.cw_power_permille)
-            current_power_percent = current_power_permille / 10
-            print(f"Current CW power is: {current_power_percent:.1f}% ({current_power_permille} / 1000)")
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        if 'laser' in locals() and laser:
-            laser.close()
-            unload(laser)
-        return None
-
-    if engaged:
-        print("Laser connection remains engaged.")
-        return laser
-    else:
-        print("Laser connection closed.")
-        if 'laser' in locals() and laser:
-            laser.close()
-            unload(laser)
-        return None
 def start_apds(detector_config=2, read_counts=False, graph_counts=False):
     """
     Initializes the MH150, and optionally reads or graphs count rates.
@@ -344,7 +265,6 @@ def start_apds(detector_config=2, read_counts=False, graph_counts=False):
         if sn is not None:
              close_device_all(sn=sn)
         return None, None, None
-
 def start_daq(device='Dev1',ch1='PFI8', ch2='PFI9',read_counts=False, graph_counts=False, bin=0.1):
     PFI_CH1 = f"/{device}/{ch1}"
     PFI_CH2 = f"/{device}/{ch2}"
@@ -1376,7 +1296,7 @@ def run_pl_position_optimizer(scan_size=2, scan_step=0.1, movetoxy=True, run_foc
             show_plot=show_plot,
             sn=sn, d1=d1, d2=d2, amc=amc
         )
-        print(f"Optimization scan complete. Best position found: ({int(bx):.2f}, {int(by):.2f}")
+        #print(f"Optimization scan complete. Best position found: ({int(bx):.2f}, {int(by):.2f}")
 
         # --- Move to Best Position ---
         if movetoxy:
@@ -1681,9 +1601,9 @@ def gohome(amc=None):
         amc_move(amc=amc,axis=ax,d=0)
     getposall()
 def start_spectro(spectro_set_cw=484, shutter_init=True,waitfortemp=True,showrange=True):
-    
     spectro = instruments.andor_kymera()
     set(spectro.wavelength_nm, spectro_set_cw)
+    time.sleep(5)
     camera = instruments.andor_iDus(spectro_instr=spectro,cooler_temp=-80,shutter_init=shutter_init)
     camera.conf(read_mode='full_vertical_binning',exposure_time=5,acq_mode="accumulate", acc_N=2)
     set(camera.cosmic_filter_en, True)
@@ -1694,42 +1614,62 @@ def start_spectro(spectro_set_cw=484, shutter_init=True,waitfortemp=True,showran
     maxw = int(get(spectro.sensor_wavelengths_nm)[-1])
     if showrange:
         print(f"Current wavelength range : {minw}nm to {maxw}nm")
-    return spectro, camera, minw, maxw
-        
+    return spectro, camera, minw, maxw        
 def close_spectro(spectro=None,camera=None):
     if camera is not None:
         unload(camera)
     if spectro is not None:
         unload(spectro)
-
-def take_spectrum_bg(camera=None):
+def take_spectrum_bg(camera=None, sav_data=True, ide=None, idex=None):
+    out_dir = output_dir_folder(base_dir=r"D:\Data_Python_PL\Spectrum")
+    timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+    data_file_bg = os.path.join(out_dir, f'spectrum_data_BG{f"_{ide}" if ide is not None else ""}{f"_{idex}" if idex is not None else ""}_{timestamp}.txt') 
     set(camera.shutter, False)
     time.sleep(1)
-    vbg = get(camera.readval)
+    print("Taking BG...")
+    print(f"Using Filename : {data_file_bg}")
+    vbg = get(camera.readval, filename=data_file_bg if sav_data else None)
     set(camera.shutter, True)
+    time.sleep(1)
     return vbg
 
+def take_live_spectrum(camera,spectro,exposure_time=1,grating=1):
+    if grating ==2:
+        wl=461
+        print("Grating 2 selected")
+    else:
+        wl=484
+        print("Grating 1 selected (Default)")
+    set_spectrum(camera=camera, spectro=spectro, acq_mode="single_scan", cosmic_filter=False, exposure_time=exposure_time,wl=wl,grating=grating)
+    scope(camera.readval)
+    
 def take_spectrum(bg=True, vbg=None,
-                  read_mode='full_vertical_binning',
-                  exposure_time=5,
-                  acq_mode="accumulate",
-                  acc_N=2,
                   data_only=False,
                   show_plot=True,
-                  camera=None,spectro=None):
+                  camera=None,sav_data=True,ide=None,idex=None):
     if camera is None:
-        spectro, camera, minw, maxw = start_spectro()
-    camera.conf(read_mode=read_mode,exposure_time=exposure_time,acq_mode=acq_mode, acc_N=acc_N)
+        print("No Camera")
+        return None
+    out_dir = output_dir_folder(base_dir=r"D:\Data_Python_PL\Spectrum")
+    timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+    data_file_bg = os.path.join(out_dir, f'spectrum_data_BG{f"_{ide}" if ide is not None else ""}{f"_{idex}" if idex is not None else ""}_{timestamp}.txt') 
+    data_file = os.path.join(out_dir, f'spectrum_data{f"_{ide}" if ide is not None else ""}{f"_{idex}" if idex is not None else ""}_{timestamp}.txt') 
     if bg:
         if vbg is None:
             set(camera.shutter, False)
             time.sleep(1)
-            vbg = get(camera.readval)
+            print("Taking BG...")
+            print(f"Using Filename : {data_file_bg}")
+            vbg = get(camera.readval, filename=data_file_bg if sav_data else None)
             set(camera.shutter, True)
             time.sleep(1)
-        v = get(camera.readval, bkg_rem=vbg[1])
+        print("Taking Spectrum...")
+        print(f"Using Filename : {data_file}")
+        v = get(camera.readval, bkg_rem=vbg[1], filename=data_file if sav_data else None)
     else:
-        v = get(camera.readval)
+        print("Taking Spectrum...")
+        print(f"Using Filename : {data_file}")
+        v = get(camera.readval, filename=data_file if sav_data else None)
     #plot
     if show_plot:
         _, ax = plt.subplots()
@@ -1744,6 +1684,659 @@ def take_spectrum(bg=True, vbg=None,
         return v[1]
     else:
         return v
+
+import os
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+
+def run_focus_sweep_save(fbase=None, fstep=0.1, fsize=30, movetobest=True, showplt=True, engaged=False, 
+                    sn=None, d1=None, d2=None, amc=None, detector_config=2,
+                    out_dir_base=r'D:\Data_Python_PL\FocusSweeps'):
+    """
+    Performs a Z-axis sweep to find the optimal focus.
+    Saves the data and plot to a file.
+    """
+    amc_local = False
+    sn_local = False
+    data_file_handle = None
+    fnow = fbase # Keep track of initial focus for error case
+
+    try:
+        # --- Device Initialization ---
+        if amc is None:
+            amc = start_attocube()
+            if amc is None: raise ConnectionError("Failed to start Attocube.")
+            amc_local = True
+
+        if sn is None or d1 is None or d2 is None:
+            sn, d1, d2 = start_apds(detector_config=detector_config)
+            if sn is None: raise ConnectionError("Failed to start APDs.")
+            sn_local = True
+
+        if engaged:
+            amc_local = sn_local = False
+
+        # --- Sweep Logic ---
+        if fbase is None:
+            fnow = amc.move.getPosition(1) / 1000
+        else:
+            fnow = fbase
+            
+        fstart, fend = fnow - (fsize / 2), fnow + (fsize / 2)
+        frange = np.arange(fstart, fend + fstep, fstep)
+        focus, totals, ch1s, ch2s = [], [], [], []
+        maxc, bestf = -1, fnow
+
+        # --- File Saving Setup ---
+        out_dir = output_dir_folder(base_dir=out_dir_base) # Ensure output_dir_folder exists
+        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+        data_file = os.path.join(out_dir, f'focus_sweep_{timestamp}.txt')
+        plot_file = os.path.join(out_dir, f'focus_sweep_{timestamp}.png')
+        
+        data_file_handle = open(data_file, 'w')
+        data_file_handle.write(f'# APD Focus Sweep - {timestamp}\n')
+        data_file_handle.write(f'# Base Focus: {fnow:.2f}, Size: {fsize}, Step: {fstep}\n')
+        data_file_handle.write('Focus(um)\tCh1(cps)\tCh2(cps)\tTotal(cps)\n')
+
+        # --- Plot Setup ---
+        plt.ion()
+        fig, ax = plt.subplots()
+        line_ch1, = ax.plot([], [], 'r.-', label='Ch1 Counts')
+        line_ch2, = ax.plot([], [], 'g.-', label='Ch2 Counts')
+        line_total, = ax.plot([], [], 'b.-', label='Total Counts')
+        ax.legend(loc='upper left')
+        ax.set_xlabel('Focus (µm)'); ax.set_ylabel('Counts (cps)')
+        ax.set_xlim(fstart, fend)
+
+        print("Starting focus sweep...")
+        for f in frange:
+            amc.move.setControlTargetPosition(1, int(f * 1000))
+            wait_until_stable(amc, 1)
+
+            cnt = sn.getCountRates()
+            ch1, ch2 = cnt[d1], cnt[d2]
+            total = ch1 + ch2
+            
+            focus.append(f)
+            ch1s.append(ch1)
+            ch2s.append(ch2)
+            totals.append(total)
+
+            if total > maxc:
+                bestf, maxc = f, total
+                
+            # Write point to file
+            data_file_handle.write(f'{f:.3f}\t{ch1}\t{ch2}\t{total}\n')
+
+            line_ch1.set_data(focus, ch1s)
+            line_ch2.set_data(focus, ch2s)
+            line_total.set_data(focus, totals)
+            ax.set_title(f'Focus Sweep | Best F: {bestf:.2f} µm')
+            ax.relim()
+            ax.autoscale_view(True, True, True)
+            fig.canvas.draw(); fig.canvas.flush_events()
+
+        print(f"\nFocus sweep complete. Best focus at: {bestf:.2f} µm")
+        if movetobest:
+            amc.move.setControlTargetPosition(1, int(bestf * 1000))
+            wait_until_stable(amc, 1)
+            print(f"Moved to best focus: {bestf:.2f} µm")
+
+        plt.ioff()
+        plt.savefig(plot_file)
+        if showplt: plt.show()
+        else: plt.close(fig)
+
+        return bestf
+
+    except Exception as e:
+        print(f"An error occurred during focus sweep: {e}")
+        return fnow # Return original focus on error
+    except KeyboardInterrupt as k:
+        print(f"Keyboard interrupt : {k}")
+        print(f"Moving to initial position ---")
+        amc.move.setControlTargetPosition(1, int(fnow * 1000)); wait_until_stable(amc, 1)
+        return fnow
+    finally:
+        # --- Cleanup ---
+        if data_file_handle:
+            data_file_handle.close()
+        if sn_local and sn: close_device_all(sn=sn)
+        if amc_local and amc: close_device_all(amc=amc)		
+def run_spectrum_focus_sweep(camera, spectro, fbase=None, fstep=0.1, fsize=30, movetobest=True, 
+                             showplt=True, engaged=False, amc=None,
+                             wl_min=None, wl_max=None, vbg=None,
+                             out_dir_base=r'D:\Data_Python_PL\FocusSweeps'):
+    """
+    Performs a Z-axis sweep using a spectrograph.
+    Saves the full spectrum at each focus step to a text file.
+    Finds best focus based on the sum of intensities between wl_min and wl_max.
+    """
+    amc_local = False
+    data_file_handle = None
+    fnow = fbase 
+
+    try:
+        # --- Device Initialization ---
+        if amc is None:
+            amc = start_attocube()
+            if amc is None: raise ConnectionError("Failed to start Attocube.")
+            amc_local = True
+
+        if engaged:
+            amc_local = False
+
+        if fbase is None:
+            fnow = amc.move.getPosition(1) / 1000
+        else:
+            fnow = fbase
+            
+        fstart, fend = fnow - (fsize / 2), fnow + (fsize / 2)
+        frange = np.arange(fstart, fend + fstep, fstep)
+        focus, totals = [], []
+        maxc, bestf = -1, fnow
+
+        # --- Get Wavelength Array & Mask ---
+        print("Taking initial dummy spectrum to calibrate wavelengths...")
+        if vbg is not None:
+            v_init = get(camera.readval, bkg_rem=vbg[1])
+        else:
+            v_init = get(camera.readval)
+        
+        wavelengths = v_init[0]
+        if wl_min is None: wl_min = wavelengths[0]
+        if wl_max is None: wl_max = wavelengths[-1]
+        wl_mask = (wavelengths >= wl_min) & (wavelengths <= wl_max)
+        
+        print(f"Plotting and optimizing sum of intensities between {wl_min:.1f} nm and {wl_max:.1f} nm.")
+
+        # --- File Saving Setup ---
+        out_dir = output_dir_folder(base_dir=out_dir_base)
+        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+        data_file = os.path.join(out_dir, f'focus_sweep_spectro_{timestamp}.txt')
+        plot_file = os.path.join(out_dir, f'focus_sweep_spectro_{timestamp}.png')
+        
+        data_file_handle = open(data_file, 'w')
+        data_file_handle.write(f'# Spectro Focus Sweep - {timestamp}\n')
+        data_file_handle.write(f'# Base Focus: {fnow:.2f}, Size: {fsize}, Step: {fstep}\n')
+        data_file_handle.write(f'# Integrated Range for Plotting: {wl_min} to {wl_max} nm\n')
+        wl_headers = "\t".join([f"{w:.2f}" for w in wavelengths])
+        data_file_handle.write(f'Focus(um)\t{wl_headers}\n')
+
+        # --- Plot Setup ---
+        plt.ion()
+        fig, ax = plt.subplots()
+        line_total, = ax.plot([], [], 'b.-', label=f'Sum ({wl_min:.1f}-{wl_max:.1f}nm)')
+        ax.legend(loc='upper left')
+        ax.set_xlabel('Focus (µm)'); ax.set_ylabel('Counts (Arb.)')
+        ax.set_xlim(fstart, fend)
+
+        print("Starting spectro focus sweep...")
+        for f in frange:
+            amc.move.setControlTargetPosition(1, int(f * 1000))
+            wait_until_stable(amc, 1)
+
+            # --- Read Spectrum ---
+            if vbg is not None:
+                v = get(camera.readval, bkg_rem=vbg[1])
+            else:
+                v = get(camera.readval)
+            intensities = v[1]
+            
+            filtered_sum = np.sum(intensities[wl_mask])
+            
+            focus.append(f)
+            totals.append(filtered_sum)
+
+            if filtered_sum > maxc:
+                bestf, maxc = f, filtered_sum
+                
+            # Write exact point data to file
+            int_data_str = "\t".join([f"{count:.2f}" for count in intensities])
+            data_file_handle.write(f'{f:.3f}\t{int_data_str}\n')
+
+            line_total.set_data(focus, totals)
+            ax.set_title(f'Focus Sweep | Best F: {bestf:.2f} µm')
+            ax.relim()
+            ax.autoscale_view(True, True, True)
+            fig.canvas.draw(); fig.canvas.flush_events()
+
+        print(f"\nFocus sweep complete. Best focus at: {bestf:.2f} µm")
+        if movetobest:
+            amc.move.setControlTargetPosition(1, int(bestf * 1000))
+            wait_until_stable(amc, 1)
+            print(f"Moved to best focus: {bestf:.2f} µm")
+
+        plt.ioff()
+        plt.savefig(plot_file)
+        if showplt: plt.show()
+        else: plt.close(fig)
+
+        return bestf
+
+    except Exception as e:
+        print(f"An error occurred during focus sweep: {e}")
+        return fnow 
+    except KeyboardInterrupt as k:
+        print(f"Keyboard interrupt : {k}")
+        print(f"Moving to initial position ---")
+        # Notice I fixed the axis to 1 below, in the original script it had a typo as axis=0
+        amc.move.setControlTargetPosition(1, int(fnow * 1000)); wait_until_stable(amc, 1)
+        return fnow
+    finally:
+        # --- Cleanup ---
+        if data_file_handle:
+            data_file_handle.close()
+        if amc_local and amc: close_device_all(amc=amc)	
+
+
+#set_spectrum(camera=camera, spectro=spectro, wl=484, grating=1) for default 420 to 547
+#set_spectrum(camera=camera, spectro=spectro, wl=461, grating=2) for HR 430 to 490
+try: 
+    from pylablib.devices import Thorlabs
+except ImportError as e: 
+    print(e)
+
+# --- Thorlabs KDC Controller Functions ---
+
+def start_kdc(SN="27257399", kdc=None, force=False):
+    """
+    Initializes and connects to a Thorlabs Kinesis Motor (rotation mount).
+    
+    Args:
+        SN (str): Serial number of the motor. Defaults to "27257399".
+        kdc (Thorlabs.KinesisMotor, optional): Existing KDC motor instance.
+        force (bool): If True, forces the motor to home upon starting. Defaults to False.
+        
+    Returns:
+        Thorlabs.KinesisMotor: The connected motor object.
+    """
+    if kdc is not None:
+        return kdc
+    else:
+        try:
+            kdc = Thorlabs.KinesisMotor(SN)
+            kdc.open()
+            print(f"Homing KDC motor SN: {SN}...")
+            kdc.home(force=force)
+            print(f"Connected to KDC motor SN: {SN}")
+            return kdc
+        except Exception as e:
+            print(f"ERROR: Failed to connect to KDC motor: {e}")
+            return None
+
+def kdc_move_deg(deg, kdc):
+    """
+    Moves the Thorlabs KDC rotation mount to the specified angle in degrees 
+    and waits until movement is complete.
+    
+    Args:
+        deg (float): Target angle in degrees.
+        kdc (Thorlabs.KinesisMotor, optional): Existing KDC motor instance.
+    """
+    kdc_local = False
+    if kdc is None:
+        kdc = start_kdc()
+        kdc_local = True
+        
+    if kdc is None:
+        print("ERROR: KDC motor is not initialized.")
+        return
+
+    # Conversion factor: 1 degree = 1919.6418... steps
+    step = deg * 1919.6418578623391
+    kdc.move_to(step)
+    
+    # Wait until the motor starts moving (if there's a slight hardware delay)
+    time.sleep(0.05)
+    
+    # Wait until movement completes
+    try:
+        while kdc.is_moving():
+            time.sleep(0.01)
+    except Exception:
+        # Fallback if is_moving is a property instead of a method depending on pylablib version
+        while getattr(kdc, 'is_moving', False):
+            time.sleep(0.01)
+
+    if kdc_local and kdc:
+        try:
+            kdc.close()
+        except Exception:
+            pass
+
+def kdc_position_deg(kdc):
+    """
+    Reads the current position of the Thorlabs KDC rotation mount in degrees.
+    
+    Args:
+        kdc (Thorlabs.KinesisMotor, optional): Existing KDC motor instance.
+        
+    Returns:
+        float: Current position in degrees.
+    """
+    kdc_local = False
+    if kdc is None:
+        kdc = start_kdc()
+        kdc_local = True
+        
+    if kdc is None:
+        print("ERROR: KDC motor is not initialized.")
+        return 0.0
+
+    current_steps = kdc.get_position()
+    current_deg = current_steps / 1919.6418578623391
+    
+    if kdc_local and kdc:
+        try:
+            kdc.close()
+        except Exception:
+            pass
+
+    return current_deg
+
+
+# --- Integrated Polarization PL Measurement ---
+
+def run_pl_polarization(start_deg=0, end_deg=360, step_deg=10, 
+                        detector_config=2, out_dir_base=r'D:\Data_Python_PL\Polarization',
+                        show_plot=True, force_home_kdc=False, kdc=None, amc=None, sn=None, d1=None, d2=None):
+    """
+    Performs a polarization-dependent PL measurement by sweeping a Thorlabs rotation mount 
+    and recording APD count rates at each angle.
+    
+    Args:
+        start_deg (float): Starting angle in degrees.
+        end_deg (float): Ending angle in degrees.
+        step_deg (float): Angle increment step in degrees.
+        detector_config (int): Detector configuration (1 or 2).
+        out_dir_base (str): Base directory to save output data and plots.
+        show_plot (bool): If True, displays the plot after completion.
+        force_home_kdc (bool): If True, passes force=True to start_kdc.
+        kdc, amc, sn, d1, d2: Externally managed device handles (optional).
+        
+    Returns:
+        tuple: (angles_deg, counts_total) arrays.
+    """
+    kdc_local = False
+    amc_local = False
+    sn_local = False
+    data_file_handle = None
+
+    try:
+        # === Initialize Devices ===
+        if kdc is None:
+            kdc = start_kdc(force=force_home_kdc)
+            if kdc is None: raise ConnectionError("Failed to start Thorlabs KDC motor.")
+            kdc_local = True
+
+        if amc is None:
+            amc = start_attocube()
+            if amc is None: raise ConnectionError("Failed to start Attocube.")
+            amc_local = True
+
+        if sn is None or d1 is None or d2 is None:
+            sn, d1, d2 = start_apds(detector_config=detector_config)
+            if sn is None: raise ConnectionError("Failed to start APDs.")
+            sn_local = True
+
+        # === Setup Output Directory and Files ===
+        out_dir = output_dir_folder(base_dir=out_dir_base)
+        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+        data_file = os.path.join(out_dir, f'polarization_data_{timestamp}.txt')
+        plot_file = os.path.join(out_dir, f'polarization_plot_{timestamp}.png')
+
+        print(f'Saving polarization data to: {data_file}')
+        data_file_handle = open(data_file, 'w')
+        data_file_handle.write(f'# Polarization PL Measurement - {timestamp}\n')
+        data_file_handle.write('# Req_Angle(deg)\tAct_Angle(deg)\tCount1\tCount2\tTotal\n')
+
+        angles = np.arange(start_deg, end_deg + step_deg, step_deg)
+        actual_angles = []
+        ch1_counts = []
+        ch2_counts = []
+        totals = []
+
+        print("\nStarting polarization sweep...")
+        for angle in angles:
+            # Move polarization stage (passing persistent kdc handle if available)
+            kdc_move_deg(angle, kdc=kdc)
+            time.sleep(0.2)  # Allow stage to settle
+            
+            # Read back actual position and counts
+            act_angle = kdc_position_deg(kdc=kdc)
+            cnt = sn.getCountRates()
+            c1, c2 = cnt[d1], cnt[d2]
+            total = c1 + c2
+
+            actual_angles.append(act_angle)
+            ch1_counts.append(c1)
+            ch2_counts.append(c2)
+            totals.append(total)
+
+            data_file_handle.write(f'{angle:.2f}\t{act_angle:.2f}\t{c1}\t{c2}\t{total}\n')
+            print(f'Angle: {act_angle:.1f}° | Total Counts: {total}', end='\r')
+
+        print("\nPolarization sweep complete.")
+
+        # === Plot Results ===
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(actual_angles, totals, 'bo-', lw=2, label='Total Counts')
+        ax.set_xlabel('Polarizer Angle (deg)')
+        ax.set_ylabel('Counts (cps)')
+        ax.set_title(f'Polarization Dependence | {timestamp}')
+        ax.grid(True)
+        ax.legend(loc='upper right')
+
+        plt.tight_layout()
+        plt.savefig(plot_file)
+        print(f"Plot saved to: {plot_file}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close(fig)
+
+        return np.array(actual_angles), np.array(totals)
+
+    except Exception as e:
+        print(f"\nA critical error occurred during polarization scan: {e}")
+        return None, None
+    finally:
+        print("\n--- Cleaning up polarization scan resources ---")
+        if data_file_handle:
+            data_file_handle.close()
+        if kdc_local and kdc:
+            try:
+                kdc.close()
+                print("KDC motor closed.")
+            except Exception:
+                pass
+        if sn_local and sn: close_device_all(sn=sn)
+        if amc_local and amc: close_device_all(amc=amc)
+        
+        
+        
+        
+import os
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+
+def run_pl_polarization_spectrum(start_deg=0, end_deg=360, step_deg=10, 
+                        detector_config=2, out_dir_base=r'D:\Data_Python_PL\Polarization',
+                        show_plot=True, force_home_kdc=False, kdc=None, amc=None, 
+                        camera=None, bg=True, vbg=None, ide=None, idex=None):
+    """
+    Performs a polarization-dependent PL measurement by sweeping a Thorlabs rotation mount 
+    and recording a full spectrum at each angle using the camera/spectrometer.
+    
+    Args:
+        start_deg (float): Starting angle in degrees.
+        end_deg (float): Ending angle in degrees.
+        step_deg (float): Angle increment step in degrees.
+        detector_config (int): Detector configuration.
+        out_dir_base (str): Base directory to save output data and plots.
+        show_plot (bool): If True, displays the plot after completion.
+        force_home_kdc (bool): If True, passes force=True to start_kdc.
+        kdc, amc, camera: Externally managed device handles (optional).
+        bg (bool): If True, takes background subtraction before scanning.
+        vbg (tuple): Pre-acquired background data.
+        ide, idex: Optional identifiers used in folder and filenames.
+        
+    Returns:
+        tuple: (actual_angles, all_spectra) arrays/lists.
+    """
+    kdc_local = False
+    amc_local = False
+
+    try:
+        # === Initialize Devices ===
+        if kdc is None:
+            kdc = start_kdc(force=force_home_kdc)
+            if kdc is None: raise ConnectionError("Failed to start Thorlabs KDC motor.")
+            kdc_local = True
+
+        if amc is None:
+            try:
+                amc = start_attocube()
+                amc_local = True
+            except NameError:
+                pass
+
+        if camera is None:
+            print("No Camera provided.")
+            return None, None
+
+        # === Setup Output Directory and Subfolder with Timestamp and Identifiers ===
+        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+        folder_suffix = f"{f'_{ide}' if ide is not None else ''}{f'_{idex}' if idex is not None else ''}"
+        sub_folder_name = f"{timestamp}{folder_suffix}"
+        out_dir = os.path.join(out_dir_base, sub_folder_name)
+        os.makedirs(out_dir, exist_ok=True)
+
+        print(f'Saving polarization spectra to directory: {out_dir}')
+
+        # === Optional Background Acquisition ===
+        if bg and vbg is None:
+            try:
+                set(camera.shutter, False)
+                time.sleep(1)
+                data_file_bg = os.path.join(out_dir, f'spectrum_data_BG{folder_suffix}_{timestamp}.txt')
+                print("Taking BG...")
+                print(f"Using Filename : {data_file_bg}")
+                vbg = get(camera.readval, filename=data_file_bg)
+                set(camera.shutter, True)
+                time.sleep(1)
+            except Exception as e:
+                print(f"Warning: Could not take background automatically: {e}")
+                vbg = None
+
+        angles = np.arange(start_deg, end_deg + step_deg, step_deg)
+        actual_angles = []
+        all_spectra = []
+
+        print("\nStarting polarization spectrum sweep...")
+        for angle in angles:
+            # Move polarization stage
+            kdc_move_deg(angle, kdc=kdc)
+            time.sleep(0.2)  # Allow stage to settle
+            
+            # Read back actual position
+            act_angle = kdc_position_deg(kdc=kdc)
+            actual_angles.append(act_angle)
+
+            # Construct filename including the KDC position degree
+            deg_str = f"deg_{act_angle:.1f}".replace('.', '_')
+            data_file = os.path.join(out_dir, f'spectrum_data{folder_suffix}_{deg_str}_{timestamp}.txt')
+
+            # Take spectrum using camera logic
+            # if bg and vbg is not None and len(vbg) > 1:
+            #     print(f"Taking Spectrum at {act_angle:.1f}°...")
+            #     v = get(camera.readval, bkg_rem=vbg[1], filename=data_file)
+            # else:
+            print(f"Taking Spectrum at {act_angle:.1f}°...")
+            v = get(camera.readval, filename=data_file)
+
+            all_spectra.append(v)
+
+        print("\nPolarization spectrum sweep complete.")
+
+        # === Plot Results ===
+        if show_plot:
+            fig, ax = plt.subplots(figsize=(8, 6))
+            for i, (ang, v) in enumerate(zip(actual_angles, all_spectra)):
+                ax.plot(v[0], v[1], label=f'{ang:.1f}°')
+            
+            ax.set_xlim(np.min(all_spectra[0][0]), np.max(all_spectra[0][0]))
+            ax.set_xlabel('Wavelength (nm)')
+            ax.set_ylabel('Counts (Arb.)')
+            ax.grid(True)
+            ax.set_title(f'PL Polarization Spectra | {timestamp}')
+            
+            if len(angles) <= 12:
+                ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1))
+                
+            plt.tight_layout()
+            plot_file = os.path.join(out_dir, f'polarization_summary_plot_{timestamp}.png')
+            plt.savefig(plot_file)
+            print(f"Summary plot saved to: {plot_file}")
+            plt.show()
+        else:
+            plt.close('all')
+
+        return np.array(actual_angles), all_spectra
+
+    except Exception as e:
+        print(f"\nA critical error occurred during polarization scan: {e}")
+        return None, None
+    finally:
+        print("\n--- Cleaning up polarization scan resources ---")
+        if kdc_local and kdc:
+            try:
+                kdc.close()
+                print("KDC motor closed.")
+            except Exception:
+                pass
+        if amc_local and amc:
+            try:
+                close_device_all(amc=amc)
+            except Exception:
+                pass
+
+def set_spectrum(
+    camera=None,
+    spectro=None,
+    wl=None,
+    grating=2,
+    exposure_time=5,
+    acq_mode="accumulate",
+    acc_N=2,
+    cosmic_filter=True,
+):
+  # Configure spectrometer wavelength and grating if provided
+  if spectro is not None and wl is not None:
+    set(spectro.active_grating, int(grating))
+    set(spectro.wavelength_nm, int(wl))
+    minw = int(get(spectro.sensor_wavelengths_nm)[0])
+    maxw = int(get(spectro.sensor_wavelengths_nm)[-1])
+    print(f"Current wavelength range : {minw}nm to {maxw}nm")
+
+  # Configure camera settings if provided
+  if camera is not None:
+    conf_args = {
+        "read_mode": "full_vertical_binning",
+        "exposure_time": exposure_time,
+        "acq_mode": acq_mode,
+    }
+    if acq_mode == "accumulate" and acc_N is not None:
+      conf_args["acc_N"] = acc_N
+
+    camera.conf(**conf_args)
+    set(camera.cosmic_filter_en, cosmic_filter)
+    print(camera.conf())
+
 # === Plotting Utilities ===
 
 def _set_tab20_cycle(ax):
@@ -2615,10 +3208,8 @@ def start_cryo(ip_address=DEFAULT_CRYO_IP, cryo=None):
     except Exception as e:
         print(f"ERROR: Failed to connect to CryoCore: {e}")
         return None
-
 def _get_cryo_val(res):
     return res[1] if isinstance(res, tuple) else res
-
 def cryo_state(cryo=None):
     c = start_cryo(cryo=cryo)
     if not c: return "Unknown"
@@ -2711,6 +3302,7 @@ def cryo_start_cooldown(cryo=None, target_temp=10, bakeout=False, n2purge=False)
     except Exception as e:
         print(f"Error starting cooldown: {e}")
 
+
 def cryo_get_temp_p1(cryo=None):
     c = start_cryo(cryo=cryo)
     if not c: return None
@@ -2726,6 +3318,19 @@ def cryo_get_temp_u1(cryo=None):
     except Exception as e:
         print(f"Error reading user 1 temperature: {e}")
         return None
+
+def cryo_waitforstable(cryo=None, poll_interval=2):
+    cryo = start_cryo(cryo=cryo)
+    if not cryo: return
+    print(f"Waiting for platform temperature to stabalize...")
+    while True:
+        current_temp = cryo_get_temp_p1(cryo)
+        if cryo.get_system_state() == 'StableAtTarget':
+            print(f"Platform reached stability temperature: {current_temp:.2f} K")
+            break
+        time.sleep(poll_interval)
+
+
 
 def cryo_waitfortemp_p1(req_temp, cryo=None, tolerance=1.0, poll_interval=2):
     c = start_cryo(cryo=cryo)
@@ -3036,5 +3641,278 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
             try: amc.close() 
             except AttributeError: pass
 
+def run_live_camera(camera_serial="11484", exposure_ms=10):
+    exposure_us = exposure_ms * 1000
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(8, 6))
+    img_display = None
+    
+    try:
+        with TLCameraSDK() as sdk:
+            available_cameras = sdk.discover_available_cameras()
+            if not available_cameras:
+                raise ConnectionError("No Thorlabs cameras found!")
+            
+            target_serial = next((cam for cam in available_cameras if camera_serial in cam), available_cameras[0])
+            
+            with sdk.open_camera(target_serial) as camera:
+                camera.exposure_time_us = exposure_us
+                camera.frames_per_trigger_zero_for_unlimited = 1
+                
+                print(f"\n[COLOUR LIVE FEED ACTIVE] Using camera: {target_serial}")
+                print(">>> PRESS 'CTRL+C' IN THE TERMINAL TO EXIT <<<")
+                
+                while True:
+                    camera.arm(frames_to_buffer=1)
+                    camera.issue_software_trigger()
+                    
+                    frame = None
+                    attempts = 0
+                    while frame is None and attempts < 10:
+                        time.sleep(0.05)
+                        frame = camera.get_pending_frame_or_null()
+                        attempts += 1
+                        
+                    if frame is not None:
+                        img_buf = np.asarray(frame.image_buffer)
+                        
+                        # Handle color processing if data format returns packed/planar RGB elements or mono-to-color
+                        if img_buf.ndim == 2 and hasattr(camera, 'color_filter_array') and camera.color_filter_array is not None:
+                            # Depending on Thorlabs SDK wrapper versions, color conversion can be handled via built-in SDK processors or standard debayering (e.g., cv2)
+                            import cv2
+                            # Fallback interpretation if mono buffer represents raw Bayer pattern from a color sensor
+                            if camera.color_filter_array != 0:
+                                # Example automatic Bayer demosaicing if raw mono buffer is pulled from a color sensor
+                                bayer_cvt = getattr(cv2, 'COLOR_BayerRG2RGB', cv2.COLOR_BayerBG2RGB)
+                                img_rgb = cv2.cvtColor(img_buf, bayer_cvt)
+                            else:
+                                img_rgb = cv2.cvtColor(img_buf, cv2.COLOR_GRAY2RGB)
+                        elif img_buf.ndim == 3:
+                            img_rgb = img_buf # Already multi-channel color
+                        else:
+                            import cv2
+                            img_rgb = cv2.cvtColor(img_buf, cv2.COLOR_GRAY2RGB)
+                            
+                        if img_display is None:
+                            img_display = ax.imshow(img_rgb)
+                            ax.set_title("Live Colour Feed")
+                            ax.axis('off')
+                        else:
+                            img_display.set_data(img_rgb)
+                            
+                        fig.canvas.draw()
+                        fig.canvas.flush_events()
+                        
+                    camera.disarm()
+                    
+    except KeyboardInterrupt:
+        print("\nLive feed stopped by user.")
+    finally:
+        plt.ioff()
+        plt.close('all')
+        
+        
+import os
+import time
+import numpy as np
+import matplotlib.pyplot as plt
 
-# %%
+def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
+                           camera_serial="11484", exposure_ms=10, 
+                           out_dir_base=r'D:\Data_Python_PL\Camera',
+                           move_to_best=True, post_sweep_live_feed=True,
+                           amc=None):
+    amc_local = False
+    data_file_handle = None
+    best_f = None
+    aborted = False
+    exposure_us = exposure_ms * 1000
+    
+    # Declare loop-scoped variables externally to prevent NameError in finally block
+    plot_file = None
+    
+    try:
+        # === 1. Start AMC ===
+        if amc is None:
+            amc = start_attocube()
+            if amc is None: raise ConnectionError("Failed to start Attocube.")
+            amc_local = True
+
+        fnow = center_f if center_f is not None else amc.move.getPosition(1) / 1000
+        center_f = fnow
+        best_f = center_f  
+
+        # Setup Output Directories
+        out_dir = output_dir_folder(base_dir=out_dir_base)
+
+        # Setup Real-time Plotting
+        plt.ion()
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        f_start, f_end = center_f - (f_size / 2), center_f + (f_size / 2)
+        f_pos = np.arange(f_start, f_end + step, step)
+        intensity_data = np.zeros(len(f_pos), dtype=float)
+        
+        line1, = ax1.plot(f_pos, intensity_data, 'b-o', markersize=4)
+        ax1.set_xlabel('F / Z (µm)')
+        ax1.set_ylabel('Max Single-Pixel Intensity')
+        ax1.set_title('Focus Sweep Curve')
+        ax1.grid(True, linestyle='--', alpha=0.7)
+        
+        img_display = None
+        ax2.set_title('Live Camera Feed')
+        ax2.axis('off')
+        fig.tight_layout()
+
+        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+        plot_file = os.path.join(out_dir, f'cam_focus_plot_{timestamp}.png')
+        data_file = os.path.join(out_dir, f'cam_focus_data_{timestamp}.txt')
+
+        data_file_handle = open(data_file, 'w')
+        data_file_handle.write(f'# Camera Focus Sweep - {timestamp}\n# Center F: {center_f}\n')
+        data_file_handle.write('# f_req\tf_act\tintensity\tmax_x\tmax_y\n')
+
+        # === 2. Start Camera inside Context Managers ===
+        with TLCameraSDK() as sdk:
+            available_cameras = sdk.discover_available_cameras()
+            if not available_cameras: raise ConnectionError("No Thorlabs cameras found!")
+            
+            target_serial = next((cam for cam in available_cameras if camera_serial in cam), available_cameras[0])
+            
+            with sdk.open_camera(target_serial) as camera:
+                camera.exposure_time_us = exposure_us
+                camera.frames_per_trigger_zero_for_unlimited = 1
+
+                # === 3. THE DUMMY FRAME FIX ===
+                print("\nClearing stale hardware buffers...")
+                camera.arm(frames_to_buffer=1)
+                camera.issue_software_trigger()
+                time.sleep(0.2)
+                _ = camera.get_pending_frame_or_null() 
+                camera.disarm()
+                time.sleep(0.1)
+
+                max_int = -1
+                total_points = len(f_pos)
+                point_counter = 0
+
+                print(f"--- Starting Sweep ({f_start:.2f} µm to {f_end:.2f} µm) ---")
+
+                # === SWEEP LOOP ===
+                for i, y in enumerate(f_pos):
+                    amc.move.setControlTargetPosition(1, int(y * 1000))
+                    wait_until_stable(amc, axis=1)
+                    
+                    f_act = amc.move.getPosition(1) / 1000
+                    
+                    camera.arm(frames_to_buffer=1)
+                    camera.issue_software_trigger()
+                    time.sleep(0.5) 
+                    
+                    frame = None
+                    attempts = 0
+                    while frame is None and attempts < 10:
+                        time.sleep(0.1) 
+                        frame = camera.get_pending_frame_or_null()
+                        attempts += 1
+                    
+                    if frame is None:
+                        print(f"Warning: Frame missing at Z={f_act:.2f} µm")
+                        intensity, coords, process_img = 0, (0, 0), np.zeros((10, 10))
+                    else:
+                        imagem = np.asarray(frame.image_buffer)
+                        intensity, coords, process_img = get_peak_intensity(imagem)
+                    
+                    camera.disarm()
+
+                    intensity_data[i] = intensity
+                    if intensity > max_int:
+                        max_int, best_f = intensity, f_act
+
+                    max_y, max_x = coords
+                    data_file_handle.write(f'{y:.3f}\t{f_act:.3f}\t{intensity:.2f}\t{max_x}\t{max_y}\n')
+                    data_file_handle.flush()
+
+                    point_counter += 1
+                    print(f'Scan: {point_counter}/{total_points} | Z: {f_act:.2f} | Peak: {intensity:.0f} at X:{max_x}, Y:{max_y}', end='\r')
+
+                    line1.set_ydata(intensity_data)
+                    ax1.relim()
+                    ax1.autoscale_view()
+                    ax1.set_title(f'Focus Sweep – Max: {max_int:.0f} @({best_f:.2f} µm)')
+                    
+                    if img_display is None:
+                        img_display = ax2.imshow(process_img, cmap='gray' if process_img.ndim == 2 else None, vmin=0)
+                    else:
+                        img_display.set_data(process_img)
+                        if process_img.ndim == 2:
+                            vmax_val = max(10, process_img.max()) 
+                            img_display.set_clim(vmin=0, vmax=vmax_val)
+                        
+                    fig.canvas.draw()
+                    fig.canvas.flush_events()
+
+                print("\n\nScan complete.")
+                
+                # === MOVE TO BEST FOCUS ===
+                target_f = best_f if move_to_best else center_f
+                print(f"Moving to target focus position: {target_f:.2f} µm...")
+                amc.move.setControlTargetPosition(1, int(target_f * 1000))
+                wait_until_stable(amc, axis=1)
+                time.sleep(0.3)
+
+                # === LIVE FEED ===
+                if post_sweep_live_feed:
+                    print(f"\n[LIVE FEED ACTIVE] Stage parked at {target_f:.2f} µm.")
+                    print(">>> PRESS 'CTRL+C' IN THE TERMINAL TO STOP AND CLOSE <<<")
+                    
+                    ax1.set_title(f'Sweep Finished – Parked at {target_f:.2f} µm')
+                    
+                    try:
+                        while True:
+                            camera.arm(frames_to_buffer=1)
+                            camera.issue_software_trigger()
+                            
+                            frame = None
+                            attempts = 0
+                            while frame is None and attempts < 10:
+                                time.sleep(0.05)
+                                frame = camera.get_pending_frame_or_null()
+                                attempts += 1
+                            
+                            if frame is not None:
+                                imagem = np.asarray(frame.image_buffer)
+                                intensity, coords, process_img = get_peak_intensity(imagem)
+                                
+                                img_display.set_data(process_img)
+                                if process_img.ndim == 2:
+                                    vmax_val = max(10, process_img.max())
+                                    img_display.set_clim(vmin=0, vmax=vmax_val)
+                                ax2.set_title(f'Live Camera | Peak: {intensity:.0f}')
+                                
+                                fig.canvas.draw()
+                                fig.canvas.flush_events()
+                                
+                            camera.disarm()
+                    except KeyboardInterrupt:
+                        print("\nKeyboard Interrupt received. Closing live feed...")
+                        aborted = True
+
+    except Exception as e:
+        print(f"\nA critical error occurred: {e}")
+        aborted = True
+    except KeyboardInterrupt:
+        print("\nKeyboard Interrupt received during sweep.")
+        aborted = True
+    finally:
+        print("\n--- Cleaning up resources ---")
+        plt.ioff()
+        if not aborted and plot_file:
+            plt.savefig(plot_file)
+            print(f"Plot saved to: {plot_file}")
+            
+        plt.close('all') 
+        if data_file_handle: data_file_handle.close()
+        if amc_local and amc:
+            try: amc.close() 
+            except AttributeError: pass
