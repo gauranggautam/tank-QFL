@@ -1,7 +1,7 @@
 # %%
-# from pyHegel import start_pyHegel
-# start_pyHegel()
-
+from pyHegel import start_pyHegel
+start_pyHegel()
+# # %%
 import os, re, time, traceback, builtins
 from datetime import datetime
 from io import StringIO
@@ -321,7 +321,7 @@ def detector_switch(moveto = 'camera',ESP_address="GPIB1::7::INSTR",showcmd=True
             print("Detection axis Position:", pos_now.strip(), "mm")
         except: return None
     return esp
-def filter_switch(moveto = 'no',ESP_address="GPIB1::7::INSTR",showcmd=True):
+def filter_switch(moveto,ESP_address="GPIB1::7::INSTR",showcmd=True):
     rm = pyvisa.ResourceManager()
     esp = rm.open_resource(ESP_address)
     
@@ -352,6 +352,97 @@ def filter_switch(moveto = 'no',ESP_address="GPIB1::7::INSTR",showcmd=True):
             print("Filter axis Position:", pos_now.strip(), "mm")
         except: return None
     return esp
+
+
+import serial
+import time
+
+def send_cmd(drive, command):
+    drive.write(f"{command}\r".encode('ascii'))
+    return drive.read_until(b'\r').decode('ascii').strip()
+
+def Power_apds(drive, state):
+    send_cmd(drive, "IL1" if state else "IH1")
+
+def power_whitelight(drive, state):
+    send_cmd(drive, "IL1") 
+    if state:
+        time.sleep(1) 
+        send_cmd(drive, "IL2")
+    else:
+        send_cmd(drive, "IH2")
+
+def seek_home_precise(drive):
+    """
+    Micro-steps to the sensor edge and sets it as absolute zero (SP0).
+    Does NOT execute any offset movements.
+    """
+    send_cmd(drive, "SK")
+    time.sleep(0.1)
+    
+    send_cmd(drive, "VE10.0")
+    
+    while True:
+        bits = send_cmd(drive, "IS").replace("IS=", "")
+        if len(bits) >= 4 and bits[3] == '0':
+            break
+        send_cmd(drive, "DI10")
+        send_cmd(drive, "FL")
+        time.sleep(0.01)
+        
+    # Lock in true absolute zero exactly on the sensor edge
+    send_cmd(drive, "SP0")
+    time.sleep(0.1)
+
+def filterwheel(slot, offset=11.224, home_first=False, apd_final_state=False, wlight_final_state=False):
+    if slot < 0 or slot > 14:
+        return
+        
+    # Combines slot and offset into one single movement calculated from the sensor edge
+    target_steps = int(-(slot + offset) * 1400)
+    
+    try:
+        with serial.Serial(port='COM4', baudrate=38400, timeout=1) as drive:
+            
+            power_whitelight(drive, False)
+            Power_apds(drive, False)
+            
+            if home_first:
+                seek_home_precise(drive)
+
+            # Revert to safe LabVIEW speed for the long move
+            send_cmd(drive, "VE1.0") 
+            send_cmd(drive, f"FP{target_steps}")
+            
+            time.sleep(0.2)
+            while True:
+                if "0009" in send_cmd(drive, "SC"):
+                    break
+                time.sleep(0.05)
+            
+            Power_apds(drive, apd_final_state)
+            if not apd_final_state:
+                power_whitelight(drive, wlight_final_state)
+                
+    except serial.SerialException:
+        pass
+
+def set_detection(state, Homefirst=False, apd_final_state=False, wlight_final_state=False,offset=11.224):
+    if state == "camera":
+        filterwheel(0, offset=offset, home_first=Homefirst, apd_final_state=apd_final_state, wlight_final_state=wlight_final_state)
+        filter_switch(moveto="no")
+        detector_switch(moveto="camera")
+    elif state == "apd":
+        filterwheel(10, offset=offset, home_first=Homefirst, apd_final_state=apd_final_state, wlight_final_state=False)
+        filter_switch(moveto="n405")
+        detector_switch(moveto="apd")
+    elif state == "spectro":
+        filterwheel(1, offset=offset, home_first=Homefirst, apd_final_state=apd_final_state, wlight_final_state=False)
+        filter_switch(moveto="n405")
+        detector_switch(moveto="spectro")
+
+
+
 def start_attocube(amc_address='amc100num-a01-0248.local'):
     """
     Initializes and connects to an AMC positioner.
@@ -1255,21 +1346,19 @@ def multi_run_plscan():
             print("Continuing with the next job.")
 
     print("\nAll scan jobs are complete.")
-def run_pl_position_optimizer(scan_size=2, scan_step=0.1, movetoxy=True, run_focus_sweep=False,show_plot=True,
-                              sn=None, d1=None, d2=None, amc=None, detector_config=2):
+def run_pl_position_optimizer(scan_size=2, scan_step=0.1, movetoxy=True, run_focus_sweep=False, show_plot=True,
+                            sn=None, d1=None, d2=None, amc=None, detector_config=2):
     """
     Runs a small PL scan to find the brightest spot. Can be used as a standalone
     tool (showing a plot) or as a data provider for other functions.
     
     Returns:
-        tuple: Best X, Y, F coordinates, and the map data (Z_map, extent).
+        tuple: Best X, Y, and F coordinates.
     """
     sn_local = False
     amc_local = False
     
-    # Initialize local variables to ensure they exist for the return statement
     bx, by, bf = None, None, None
-    Z_map, extent = None, None
 
     try:
         # --- Robust Device Initialization ---
@@ -1288,7 +1377,7 @@ def run_pl_position_optimizer(scan_size=2, scan_step=0.1, movetoxy=True, run_foc
         y_now = amc.move.getPosition(2) / 1000
         f_now = amc.move.getPosition(1) / 1000
         
-        # We now pass the show_plot flag and capture the map data in the return.
+        # run_pl_scan returns 3 values (bx, by, bf)
         bx, by, bf = run_pl_scan(
             center_x=x_now, center_y=y_now, center_f=f_now,
             x_size=scan_size, y_size=scan_size, step=scan_step,
@@ -1296,11 +1385,10 @@ def run_pl_position_optimizer(scan_size=2, scan_step=0.1, movetoxy=True, run_foc
             show_plot=show_plot,
             sn=sn, d1=d1, d2=d2, amc=amc
         )
-        #print(f"Optimization scan complete. Best position found: ({int(bx):.2f}, {int(by):.2f}")
 
         # --- Move to Best Position ---
-        if movetoxy:
-            print(f"Moving to best X-Y position...")
+        if movetoxy and bx is not None:
+            print("Moving to best X-Y position...")
             amc.move.setControlTargetPosition(0, int(bx * 1000))
             wait_until_stable(amc, 0)
             amc.move.setControlTargetPosition(2, int(by * 1000))
@@ -1309,13 +1397,11 @@ def run_pl_position_optimizer(scan_size=2, scan_step=0.1, movetoxy=True, run_foc
             
     finally:
         # --- Cleanup Locally Opened Devices ---
-        # The 'engaged' logic is handled by only closing if opened locally.
         if sn_local: 
             close_device_all(sn=sn)
         if amc_local: 
             close_device_all(amc=amc)
             
-    # --- UPDATED return statement ---
     return bx, by, bf
 def run_g2(measure_time_s=600, bin_ps=100, window_ps=100000, detector_config=2, inp_hyst = 0, optimize_position=False, save_data=True, output_dir=r'C:/Users/iq-qfl/Documents/Gaurang/GitHub/git_codes/PlotBasic/Output/g2/acquired', sn=None, d1=None, d2=None, amc=None):
     """
@@ -1614,7 +1700,7 @@ def start_spectro(spectro_set_cw=484, shutter_init=True,waitfortemp=True,showran
     maxw = int(get(spectro.sensor_wavelengths_nm)[-1])
     if showrange:
         print(f"Current wavelength range : {minw}nm to {maxw}nm")
-    return spectro, camera, minw, maxw        
+    return spectro, camera        
 def close_spectro(spectro=None,camera=None):
     if camera is not None:
         unload(camera)
@@ -1940,7 +2026,7 @@ except ImportError as e:
 
 # --- Thorlabs KDC Controller Functions ---
 
-def start_kdc(SN="27257399", kdc=None, force=False):
+def start_kdc(SN="27257399", kdc=None, force=True):
     """
     Initializes and connects to a Thorlabs Kinesis Motor (rotation mount).
     
@@ -3916,3 +4002,5 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
         if amc_local and amc:
             try: amc.close() 
             except AttributeError: pass
+
+# %%

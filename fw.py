@@ -1,106 +1,79 @@
-import pyvisa
-from pyvisa.constants import Parity, StopBits
+import serial
 import time
-
-class ST5:
-    def __init__(self, resource="ASRL4::INSTR", baud=9600):
-        self.rm = pyvisa.ResourceManager()
-        self.inst = self.rm.open_resource(resource)
-
-        # Serial settings (same as LabVIEW / NI MAX)
-        self.inst.baud_rate = baud
-        self.inst.data_bits = 8
-        self.inst.parity = Parity.none
-        self.inst.stop_bits = StopBits.one
-        self.inst.timeout = 1000  # ms
-
-        # ST5 SCL termination
-        self.inst.write_termination = "\r"
-        self.inst.read_termination = "\r"
-
-        print("Connected to ST5 on", resource)
-
-    # -------------------------------
-    # Low-level functions
-    # -------------------------------
-    def send(self, cmd):
-        """Send SCL command (no reply expected)."""
-        print(">>", cmd)
-        self.inst.write(cmd)
-
-    def query(self, cmd):
-        """Send SCL command and read one line, timeout safe."""
-        print(">>", cmd)
-        try:
-            reply = self.inst.query(cmd)
-            print("<<", reply)
-            return reply
-        except Exception:
-            print("<< (no response)")
-            return None
-
-    # -------------------------------
-    # BASIC FUNCTIONS
-    # -------------------------------
-    def enable(self):
-        self.send("ME")   # Motor Enable
-
-    def disable(self):
-        self.send("MD")   # Motor Disable
-
-    def stop(self):
-        self.send("ST")   # Stop motion
-
-    # -------------------------------
-    # POSITION COMMANDS
-    # -------------------------------
-    def home(self):
-        """Execute homing routine."""
-        self.send("HM")   # Home command
-
-    def move_abs(self, pos_steps):
-        """Absolute move to position in steps."""
-        self.send(f"PA{pos_steps}")
-        self.send("G")    # Go
-
-    def move_rel(self, delta_steps):
-        """Relative move (positive or negative)."""
-        self.send(f"PR{delta_steps}")
-        self.send("G")
-
-    def get_position(self):
-        """Read actual position (in steps)."""
-        reply = self.query("PR")   # position request
-        try:
-            return int(reply.strip())
-        except:
-            return None
-
-    # -------------------------------
-    # MOTION SETUP PARAMETERS
-    # -------------------------------
-    def set_velocity(self, vel_rev_per_sec):
-        self.send(f"VE{vel_rev_per_sec}")
-
-    def set_accel(self, accel):
-        self.send(f"AC{accel}")
-
-    def set_decel(self, decel):
-        self.send(f"DE{decel}")
-
-    # -------------------------------
-    # DIGITAL OUTPUT CONTROL
-    # -------------------------------
-    def digital_out(self, channel, state):
-        """
-        Control digital output.
-        channel = 1 or 2
-        state = True/False
-        """
-        val = 1 if state else 0
-        self.send(f"SO{channel}={val}")  # Set Output
-
-    def close(self):
-        self.inst.close()
-        self.rm.close()
-        print("Connection closed.")
+def send_cmd(drive, command):
+   """Helper function to send commands and read the response."""
+   drive.write(f"{command}\r".encode('ascii'))
+   return drive.read_until(b'\r').decode('ascii').strip()
+def Power_apds(drive, state):
+   """
+   Controls the APDS (Gaba) device via Output 1.
+   state = False (Closed/OFF, sends IH1)
+   state = True  (Running/ON, sends IL1)
+   """
+   if state:
+       send_cmd(drive, "IL1")
+       print("APDS is now ON / Running (IL1).")
+   else:
+       send_cmd(drive, "IH1")
+       print("APDS is now OFF / Closed (IH1).")
+def seek_home_precise(drive):
+   """Performs the two-stage edge-finding homing routine."""
+   print("--- Starting Precise Homing Sequence ---")
+   print("Stage 1: Fast seek to find sensor...")
+   while True:
+       bits = send_cmd(drive, "IS").replace("IS=", "")
+       if len(bits) >= 4 and bits[3] == '0':
+           print("Sensor hit! (Overshot slightly)")
+           break
+       send_cmd(drive, "FL100")
+       time.sleep(0.05)
+   print("Stage 2: Slow reverse to find exact edge...")
+   while True:
+       bits = send_cmd(drive, "IS").replace("IS=", "")
+       if len(bits) >= 4 and bits[3] == '1':
+           print("Exact edge found!")
+           break
+       send_cmd(drive, "FL-5")
+       time.sleep(0.05)
+   print("Setting origin (SP0)...")
+   send_cmd(drive, "SP0")
+   time.sleep(0.1)
+   pr_response = send_cmd(drive, "PR")
+   print(f"Homing Complete. Current Position: {pr_response}")
+def filterwheel(slot, offset=13.43, home_first=True, apd_final_state=False):
+   """
+   0 = No Filter, 1 = LP420, 6 = BP450 ...
+   Moves the filter wheel to a specific slot (0 to 14).
+   apd_final_state controls whether the APDS is left ON (True) or OFF (False) after moving.
+   """
+   if slot < 0 or slot > 14:
+       print(f"Error: Slot must be between 0 and 14. You entered {slot}.")
+       return
+   steps_per_slot = 1400
+   target_steps = int(-(slot + offset) * steps_per_slot)
+   print(f"--- Moving to Filter {slot} ---")
+   try:
+       with serial.Serial(port='COM4', baudrate=38400, timeout=1) as drive:
+           # 1. Close APDS before moving (False = Closed)
+           Power_apds(drive, False)
+           # 2. Home the wheel if requested
+           if home_first:
+               seek_home_precise(drive)
+           # 3. Execute the move
+           print(f"Calculated target: {target_steps} steps...")
+           ack_move = send_cmd(drive, f"FP{target_steps}")
+           if ack_move == "%":
+               print("Move accepted. Motor is turning...")
+           else:
+               print(f"Warning: Drive responded with '{ack_move}'")
+           time.sleep(2)
+           final_status = send_cmd(drive, "SC")
+           print(f"Final Drive Status: {final_status}")
+           # 4. Set APDS to the requested final state
+           Power_apds(drive, apd_final_state)
+       print("Done.\n")
+   except serial.SerialException as e:
+       print(f"Port Error: {e} \n(Make sure LabVIEW is closed!)")
+if __name__ == "__main__":
+   # Example: Home the wheel, move to slot 1, and leave the APDS OFF (False)
+   filterwheel(1, offset=13.43, home_first=True, apd_final_state=False)
