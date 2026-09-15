@@ -2,6 +2,68 @@
 from pyHegel import start_pyHegel
 start_pyHegel()
 # # %%
+import builtins
+from datetime import datetime
+from io import StringIO
+import os
+import re
+import time
+traceback
+
+# Third-party libraries
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib.ticker import AutoMinorLocator, MaxNLocator
+from matplotlib.widgets import Button
+from mpl_toolkits.mplot3d import Axes3D
+import numpy as np
+import pyvisa
+
+# Matplotlib configuration
+plt.style.use('dark_background')
+TAB20_COLORS = plt.colormaps['tab20'].colors
+
+# Hardware-Specific Imports & Flags
+uhd_plots = False
+
+try:
+    from attocube import AMC
+except ImportError as e:
+    print(e)
+
+try:
+    from snAPI.Main import *
+except ImportError as e:
+    print(e)
+
+# try: from taiko_driver import TaikoLaser, PicoQuantException
+# except ImportError as e: print(e)
+
+try:
+    import nidaqmx
+    from nidaqmx.constants import Edge
+except ImportError as e:
+    print(e)
+
+try:
+    import labview_buttons_v2 as lv
+except ImportError as e:
+    print(e)
+
+try:
+    from pylablib.devices import Thorlabs
+except ImportError as e:
+    print(e)
+
+try:
+    from montana import cryocore
+except ImportError as e:
+    print(e)
+
+
+
+
 import os, re, time, traceback, builtins
 from datetime import datetime
 from io import StringIO
@@ -9,6 +71,7 @@ from io import StringIO
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+plt.style.use('dark_background')
 import matplotlib.ticker as mticker
 from matplotlib.ticker import MaxNLocator, AutoMinorLocator
 from matplotlib.widgets import Button
@@ -69,9 +132,6 @@ except ImportError as e: print(e)
 #except ImportError as e: print(e)
 
 try: import nidaqmx; from nidaqmx.constants import Edge
-except ImportError as e: print(e)
-
-try: import labview_buttons_v2 as lv
 except ImportError as e: print(e)
 
 
@@ -289,7 +349,7 @@ def start_daq(device='Dev1',ch1='PFI8', ch2='PFI9',read_counts=False, graph_coun
     t_ch2.ci_channels.all.ci_count_edges_term = PFI_CH2
     print(f'Using MPD with DAQ')
     return daq, t_ch1, t_ch2 
-def detector_switch(moveto = 'camera',ESP_address="GPIB1::7::INSTR",showcmd=True):
+def detector_switch(moveto = 'camera',ESP_address="GPIB1::7::INSTR",showcmd=False):
     rm = pyvisa.ResourceManager()
     esp = rm.open_resource(ESP_address)
     
@@ -306,22 +366,26 @@ def detector_switch(moveto = 'camera',ESP_address="GPIB1::7::INSTR",showcmd=True
         except: return None
     if moveto == 'spectro':
         try:
-            print("Detection axis moving to -49mm for Spectrometer")
+            if showcmd:
+                print("Detection axis moving to -49mm for Spectrometer")
             esp.write("3PA-49")
             time.sleep(5)
             pos_now = esp.query("3TP?")
-            print("Detection axis Position:", pos_now.strip(), "mm")
+            if showcmd:
+                print("Detection axis Position:", pos_now.strip(), "mm")
         except: return None
     if moveto == 'camera':
         try:
-            print("Detection axis moving to 47.5mm for Camera")
+            if showcmd:
+                print("Detection axis moving to 47.5mm for Camera")
             esp.write("3PA47.5")
             time.sleep(5)
             pos_now = esp.query("3TP?")
-            print("Detection axis Position:", pos_now.strip(), "mm")
+            if showcmd:
+                print("Detection axis Position:", pos_now.strip(), "mm")
         except: return None
     return esp
-def filter_switch(moveto,ESP_address="GPIB1::7::INSTR",showcmd=True):
+def filter_switch(moveto,ESP_address="GPIB1::7::INSTR",showcmd=False):
     rm = pyvisa.ResourceManager()
     esp = rm.open_resource(ESP_address)
     
@@ -337,19 +401,23 @@ def filter_switch(moveto,ESP_address="GPIB1::7::INSTR",showcmd=True):
         except: return None
     if moveto == 'n405':
         try:
-            print("Filter axis moving to 0mm for Notch 405nm")
+            if showcmd:
+                print("Filter axis moving to 0mm for Notch 405nm")
             esp.write("2PA0")
             time.sleep(5)
             pos_now = esp.query("2TP?")
-            print("Filter axis Position:", pos_now.strip(), "mm")
+            if showcmd:
+                print("Filter axis Position:", pos_now.strip(), "mm")
         except: return None
     if moveto == 'n533':
         try:
-            print("Filter axis moving to 25mm for Notch 533nm")
+            if showcmd:
+                print("Filter axis moving to 25mm for Notch 533nm")
             esp.write("2PA25")
             time.sleep(5)
             pos_now = esp.query("2TP?")
-            print("Filter axis Position:", pos_now.strip(), "mm")
+            if showcmd:
+                print("Filter axis Position:", pos_now.strip(), "mm")
         except: return None
     return esp
 
