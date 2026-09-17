@@ -5,7 +5,8 @@ import time
 import os
 
 #initialize device
-from QFLv3 import *
+from QFLv5 import start_apds
+from pyHegel.commands import *
 #sn, a, b = start_apds() #detector_config = 1 for Excieltas and 2 for MPDs
 sn, a, b = start_apds(detector_config=2)
 cnts = sn.getCountRates()

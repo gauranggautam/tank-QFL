@@ -1,14 +1,12 @@
-# %%
-from pyHegel import start_pyHegel
-start_pyHegel()
-# # %%
+from pyHegel.commands import * 
+
 import builtins
 from datetime import datetime
 from io import StringIO
 import os
 import re
 import time
-traceback
+import traceback
 
 # Third-party libraries
 import matplotlib as mpl
@@ -187,40 +185,252 @@ def add_stop_button(fig, running_flag):
     # Return the button so it's not garbage-collected
     return stop_button
 # Hardware control functions
-# Laser pm1 = instruments.thorlabs_power_meter('USB0::0x1313::0x8079::P1005280::0') power,etre
-def set_laser(power, laser=None, cw=True, softlock=None, engaged=False, close=False, read_power=False):
+
+
+# Assuming instruments, set, and get are imported/defined in your environment
+
+def set_laser(power=None, pulsed=False, laser=None, freq_khz=10000, softlock=False, engaged=True):
     """
     Controls and manages a Taiko laser connection.
+    Automatically disables the softlock (softlock=False) to allow emission.
     
-    This function handles connection, parameter setting, and optional disconnection.
-
     Args:
-        power (float, optional): Sets CW power as a percentage (0-100). 
-                                 Example: 32.5 for 32.5%. Defaults to None.
-        cw (bool, optional): Sets laser to Continuous Wave (CW) mode. Defaults to True.
-        softlock (bool, optional): Enables the software lock. Defaults to False.
-        engaged (bool, optional): If True, the connection remains open. Defaults to False.
-        close (bool, optional): Sets power to 0 and softlocks the laser.
-                                Defaults to False.
-        read_power (bool, optional): Reads and prints the current CW power. Defaults to False.
+        power (float, optional): Sets CW/Pulsed power as a percentage (0-100). Defaults to None.
+        pulsed (bool): If True, sets to pulsed mode. If False, sets to CW mode. Defaults to False.
+        laser (object, optional): Existing laser object. Defaults to None.
+        freq_khz (float): Pulse frequency in kHz. Defaults to 20000.
+        softlock (bool): Enables the software lock. Defaults to False (unlocked).
+        engaged (bool): If True, returns the connection. If False, returns None.
     """
     if laser is None:
-        laser = instruments.picoQuant.PicoQuant_Taiko_PDL_M1()
-        #print(f"Connected to: {laser.get_identity()}")
-    if power is not None:
-        print(f"\nSetting CW power to {power}%...")
-        pwr=power*10
-        set(laser.cw_power_permille, int(pwr))
-        print(f"CW power is now: {power}%")
+        try:
+            laser = instruments.picoQuant.PicoQuant_Taiko_PDL_M1()
+        except Exception as e:
+            print(f"Failed to connect to laser: {e}")
+            return None
+
+    # === 1. Unlock Laser ===
     if softlock is not None:
         set(laser.softlock_en, softlock)
-        print(f"Laser softlock state : {get(laser.softlock_en)}.")
+        print(f"\nLaser softlock state : {get(laser.softlock_en)}")
 
-    if cw:
-        set(laser.laser_mode, "cw")    
-    return laser
+    # === 2. Apply Power & Mode Settings ===
+    if power is not None:
+        pwr_permille = int(power * 10) # Convert % to permille (0-1000)
+        
+        if pulsed:
+            print("Setting Pulsed mode...")
+            set(laser.laser_mode, "pulsed")
+            
+            freq_hz = int(freq_khz * 1000)
+            print(f"Setting Frequency to {freq_hz} Hz ({freq_khz} kHz)...")
+            set(laser.pulse_burst_freq_Hz, freq_hz)
+            
+            print(f"Setting power to {power}%...")
+            set(laser.pulse_burst_power_permille, pwr_permille)
+            
+        else:
+            print("Setting CW mode...")
+            set(laser.laser_mode, "cw")
+            
+            print(f"Setting power to {power}%...")
+            set(laser.cw_power_permille, pwr_permille)
+        close_device_all(laser=laser)
 
-def start_apds(detector_config=2, read_counts=False, graph_counts=False):
+def get_laser(laser=None):
+    """
+    Queries and prints current Taiko laser parameters.
+    
+    Returns:
+        tuple: (mode, cw_power_permille, cw_power_W, pulse_power_permille, pulse_power_W, freq_hz)
+    """
+    laser_local = False
+    if laser is None:
+        try:
+            laser = instruments.picoQuant.PicoQuant_Taiko_PDL_M1()
+            laser_local = True
+        except Exception as e:
+            print(f"Failed to connect to laser: {e}")
+            return None
+
+    try:
+        mode = get(laser.laser_mode)
+        pwr_cw_p = get(laser.cw_power_permille) / 10.0      # Converted to %
+        pwr_cw_w = get(laser.cw_power_W)
+        hz = get(laser.pulse_burst_freq_Hz)
+        pwr_pulse_p = get(laser.pulse_burst_power_permille) / 10.0 # Converted to %
+        pwr_pulse_w = get(laser.pulse_burst_power_W)
+        
+        print("\n--- Taiko Laser Status ---")
+        print(f"  Mode           : {mode}")
+        print(f"  CW Power       : {pwr_cw_p}% ({pwr_cw_w} W)")
+        print(f"  Pulse Power    : {pwr_pulse_p}% ({pwr_pulse_w} W)")
+        print(f"  Frequency      : {hz} Hz ({hz / 1e6} MHz)")
+        print("-" * 28)
+
+    finally:
+        if laser_local and laser:
+            close_device_all(laser=laser)
+            
+    return mode, pwr_cw_p, pwr_cw_w, pwr_pulse_p, pwr_pulse_w, hz
+def set_laser_softlock(laser=None, engaged=True):
+    """
+    Safely zeroes the laser power and enables the software lock.
+    """
+    if laser is None:
+        try:
+            laser = instruments.picoQuant.PicoQuant_Taiko_PDL_M1()
+        except Exception as e:
+            print(f"Failed to connect to laser for softlocking: {e}")
+            return None
+            
+    print("\nEnabling Laser Softlock (Zeroing power)...")
+    set(laser.cw_power_permille, 0)
+    set(laser.pulse_burst_power_permille, 0)
+    set(laser.softlock_en, True)
+    close_device_all(laser=laser)
+
+
+import time
+import matplotlib.pyplot as plt
+
+def start_apds(detector_config=2, trpl=False, read_counts=True, graph_counts=False):
+    """
+    Initializes the MH150. Validates that total count rates > 200 cps before 
+    returning the device handle. Retries up to 3 times, polling for 10 seconds 
+    per attempt.
+    """
+    config_path_1_det = r"C:\Codes\Picoquant\snAPI_configs\Exciletas_MH.ini"
+    config_path_2_det = r"C:\Codes\Picoquant\snAPI_configs\MPDs_MH.ini"
+    config_path_3_det = r"C:\Codes\Picoquant\snAPI_configs\MPDs_MH_TRPL.ini"
+
+    d0 = 0  # Sync channel is standardly 0
+
+    for attempt in range(3):
+        sn = None  
+        d1, d2 = None, None
+        
+        try:
+            print(f"\n--- APD Initialization Attempt {attempt + 1}/3 ---")
+            
+            # --- 1. Initialize snAPI Detector ---
+            sn = snAPI()
+            sn.getDevice("1043897") 
+            
+            if not sn.initDevice():
+                raise ConnectionError('MH150 device initialization failed.')
+
+            # --- 2. Configuration Routing ---
+            if detector_config == 1:
+                d1, d2 = 1, 2
+                sn.loadIniConfig(config_path_1_det)
+                print(f'Using Exciletas: {sn.deviceConfig["ID"]}')
+                
+            elif detector_config == 2:
+                d1, d2 = 3, 4
+                if trpl:
+                    sn.loadIniConfig(config_path_3_det)
+                    print(f'Using MPDs for TRPL: {sn.deviceConfig["ID"]}')
+                else:
+                    sn.loadIniConfig(config_path_2_det)
+                    print(f'Using MPDs (Standard): {sn.deviceConfig["ID"]}')
+                    
+            elif detector_config == 3:
+                d1, d2 = 3, 4
+                sn.loadIniConfig(config_path_3_det)
+                print(f'Using MPDs for TRPL (Config 3 direct): {sn.deviceConfig["ID"]}')
+                trpl = True 
+            else:
+                raise ValueError(f"Invalid detector_config: {detector_config}")
+
+            # --- 3. Verification: Poll for 10 seconds ensuring Total > 200 ---
+            counts_passed = False
+            print("Polling APD count rates for up to 10 seconds (Requires Total > 200 cps)...")
+            
+            for sec in range(1, 11): # 1 to 10 seconds
+                time.sleep(1) # Let hardware accumulate
+                cnts = sn.getCountRates()
+
+                c1, c2 = int(cnts[d1]), int(cnts[d2])
+                total = c1 + c2
+                
+                if read_counts:
+                    print(f"  [T+{sec}s] Ch {d1}: {c1} | Ch {d2}: {c2} | Total: {total} cps")
+                    
+                if total > 200:
+                    counts_passed = True
+                    print("Verification passed! Handing over instrument.")
+                    break # Exit the polling loop early
+            
+            if not counts_passed:
+                print("Verification failed: Total counts did not exceed 200 cps within 10 seconds.")
+                print("Closing device and triggering restart...")
+                close_device_all(sn=sn)
+                time.sleep(1.5) # Brief cooldown before the next attempt
+                continue # Jump to the next iteration of the 3-attempt loop
+
+            # --- 4. Graph Counts Functionality (If Verification Passed) ---
+            if graph_counts:
+                print("Starting live count graph... Press Ctrl+C to exit.")
+                fig = None 
+                try:
+                    start_time = time.time()
+                    times, counts1, counts2 = [], [], []
+                    running = [True] 
+
+                    plt.ion()
+                    fig, ax = plt.subplots()
+                    
+                    ax.set_title('Live Detector Counts')
+                    ax.set_xlabel('Elapsed Time (s)'); ax.set_ylabel('Counts (cps)')
+                    line1, = ax.plot([], [], 'r.-', label=f'Channel {d1}')
+                    line2, = ax.plot([], [], 'b.-', label=f'Channel {d2}')
+                    ax.legend(loc='upper left')
+                    plt.show(block=False)
+
+                    while running[0]:
+                        cnt = sn.getCountRates()
+                        tc1, tc2 = int(cnt[d1]), int(cnt[d2])
+                        
+                        times.append(time.time() - start_time)
+                        counts1.append(tc1)
+                        counts2.append(tc2)
+
+                        line1.set_data(times, counts1)
+                        line2.set_data(times, counts2)
+                        
+                        ax.relim(); ax.autoscale_view()
+                        fig.canvas.draw(); fig.canvas.flush_events()
+                        plt.pause(0.1)
+
+                except KeyboardInterrupt:
+                    print("\nGraphing stopped by user.")
+                finally:
+                    if fig and plt.fignum_exists(fig.number):
+                        plt.ioff()
+                        plt.close(fig)
+                    print("Closing device after graphing.")
+                    close_device_all(sn=sn)
+                    return (None, None, None, None) if trpl else (None, None, None)
+
+            # --- 5. Successful Standard Return ---
+            if trpl:
+                return sn, d0, d1, d2
+            else:
+                return sn, d1, d2
+
+        except Exception as e:
+            print(f"An error occurred during attempt {attempt + 1}: {e}")
+            if sn is not None:
+                try: close_device_all(sn=sn)
+                except: pass
+            time.sleep(1.5) # Cooldown before next attempt
+
+    # --- Exhausted all 3 attempts ---
+    print("\nCritical Error: Failed to start APDs with > 200 cps after 3 attempts.")
+    return (None, None, None, None) if trpl else (None, None, None)
+
+def start_apds_trpl():
     """
     Initializes the MH150, and optionally reads or graphs count rates.
 
@@ -235,96 +445,31 @@ def start_apds(detector_config=2, read_counts=False, graph_counts=False):
                Returns (None, None, None) on failure or after graph_counts is used.
     """
     # Define configuration paths
-    config_path_1_det = r'C:\Users\iq-qfl\Documents\Gaurang\Codes\user_configs_snAPI\Exciletas_MH.ini'
-    config_path_2_det = r'C:\Users\iq-qfl\Documents\Gaurang\Codes\user_configs_snAPI\MPDs_MH.ini'
+    config_path_3_det = r'C:\Codes\Picoquant\user_configs_snAPI\MPDs_MH_TRPL.ini'
 
     sn = None  # Initialize sn to None for robust error handling
     try:
         # --- Initialize snAPI Detector ---
         sn = snAPI()
-        #sn.closeDevice(allDevices=True)
-        #sn = snAPI()
-        #sn.exitAPI()
-        #sn = snAPI()
         sn.getDevice("1043897") # Register the device by serial number.
         
 
-        if not sn.initDevice():
+        if not sn.initDevice(MeasMode.Histogram):
             raise ConnectionError('MH150 device initialization failed.')
+    
+        d0, d1, d2 =0, 3, 4
+        sn.loadIniConfig(config_path_3_det)
+        print(f'Using MPDs for TRPL: {sn.deviceConfig["ID"]}')
 
-        if detector_config == 1:
-            d1, d2 = 1, 2
-            sn.loadIniConfig(config_path_1_det)
-            print(f'Using Exciletas: {sn.deviceConfig["ID"]}')
-        else:  # Default to config 2
-            d1, d2 = 3, 4
-            sn.loadIniConfig(config_path_2_det)
-            print(f'Using MPDs: {sn.deviceConfig["ID"]}')
-
-        # --- Read Counts Functionality ---
-        if read_counts:
-            print("Current count rates:", sn.getCountRates())
-
-        # --- Graph Counts Functionality ---
-        if graph_counts:
-            print("Starting live count graph... Press Ctrl+C or use the 'Stop' button to exit.")
-            fig = None # Initialize fig for the finally block
-            try:
-                start_time = time.time()
-                times, counts1, counts2, totals = [], [], [], []
-                running = [True] # Use a mutable list for the stop button flag
-
-                plt.ion()
-                fig, ax = plt.subplots()
-                # stop_button = add_stop_button(fig=fig, running_flag=running) # Assuming this function exists
-                
-                ax.set_title('Live Detector Counts')
-                ax.set_xlabel('Elapsed Time (s)'); ax.set_ylabel('Counts (cps)')
-                line1, = ax.plot([], [], 'r.-', label=f'Channel {d1}')
-                line2, = ax.plot([], [], 'b.-', label=f'Channel {d2}')
-                #line_total, = ax.plot([], [], 'g.-', label='Total')
-                ax.legend(loc='upper left')
-                plt.show(block=False)
-
-                while running[0]:
-                    cnt = sn.getCountRates()
-                    c1, c2 = int(cnt[d1]), int(cnt[d2])
-                    total = c1 + c2
-                    
-                    times.append(time.time() - start_time)
-                    counts1.append(c1)
-                    counts2.append(c2)
-                    totals.append(total)
-
-                    line1.set_data(times, counts1)
-                    line2.set_data(times, counts2)
-                    #line_total.set_data(times, totals)
-                    
-                    ax.relim(); ax.autoscale_view()
-                    fig.canvas.draw(); fig.canvas.flush_events()
-                    plt.pause(0.1)
-
-            except KeyboardInterrupt:
-                print("\nGraphing stopped by user.")
-            finally:
-                # This block ensures cleanup happens for the graph_counts utility
-                if fig and plt.fignum_exists(fig.number):
-                    plt.ioff()
-                    plt.close(fig)
-                print("Closing device after graphing.")
-                # Since this is a self-contained utility, we close the device it used.
-                close_device_all(sn=sn)
-                return None, None, None # The device is closed, so we return None
-
-        # If not graphing, return the initialized device handles for external management
-        return sn, d1, d2
+        return sn, d0, d1, d2
 
     except Exception as e:
         print(f"An error occurred in start_apds: {e}")
         # Ensure cleanup happens on any initialization error
         if sn is not None:
              close_device_all(sn=sn)
-        return None, None, None
+        return None, None, None 
+
 def start_daq(device='Dev1',ch1='PFI8', ch2='PFI9',read_counts=False, graph_counts=False, bin=0.1):
     PFI_CH1 = f"/{device}/{ch1}"
     PFI_CH2 = f"/{device}/{ch2}"
@@ -349,105 +494,40 @@ def start_daq(device='Dev1',ch1='PFI8', ch2='PFI9',read_counts=False, graph_coun
     t_ch2.ci_channels.all.ci_count_edges_term = PFI_CH2
     print(f'Using MPD with DAQ')
     return daq, t_ch1, t_ch2 
-def detector_switch(moveto = 'camera',ESP_address="GPIB1::7::INSTR",showcmd=False):
-    rm = pyvisa.ResourceManager()
-    esp = rm.open_resource(ESP_address)
-    
-    if moveto == 'apd':
-        try:
-            if showcmd:
-                print("Detection axis moving to 0mm for APDs")
-            esp.write("3PA0")
-            time.sleep(5)
-            pos_now = esp.query("3TP?")
-            if showcmd:
-                print("Detection axis moving to 0mm for APDs")
-            print("Detection axis Position:", pos_now.strip(), "mm")
-        except: return None
-    if moveto == 'spectro':
-        try:
-            if showcmd:
-                print("Detection axis moving to -49mm for Spectrometer")
-            esp.write("3PA-49")
-            time.sleep(5)
-            pos_now = esp.query("3TP?")
-            if showcmd:
-                print("Detection axis Position:", pos_now.strip(), "mm")
-        except: return None
-    if moveto == 'camera':
-        try:
-            if showcmd:
-                print("Detection axis moving to 47.5mm for Camera")
-            esp.write("3PA47.5")
-            time.sleep(5)
-            pos_now = esp.query("3TP?")
-            if showcmd:
-                print("Detection axis Position:", pos_now.strip(), "mm")
-        except: return None
-    return esp
-def filter_switch(moveto,ESP_address="GPIB1::7::INSTR",showcmd=False):
-    rm = pyvisa.ResourceManager()
-    esp = rm.open_resource(ESP_address)
-    
-    if moveto == 'no':
-        try:
-            if showcmd:
-                print("Filter axis moving to -24mm for No Filter")
-            esp.write("2PA-24")
-            time.sleep(5)
-            pos_now = esp.query("2TP?")
-            if showcmd:
-                print("Filter axis Position:", pos_now.strip(), "mm")
-        except: return None
-    if moveto == 'n405':
-        try:
-            if showcmd:
-                print("Filter axis moving to 0mm for Notch 405nm")
-            esp.write("2PA0")
-            time.sleep(5)
-            pos_now = esp.query("2TP?")
-            if showcmd:
-                print("Filter axis Position:", pos_now.strip(), "mm")
-        except: return None
-    if moveto == 'n533':
-        try:
-            if showcmd:
-                print("Filter axis moving to 25mm for Notch 533nm")
-            esp.write("2PA25")
-            time.sleep(5)
-            pos_now = esp.query("2TP?")
-            if showcmd:
-                print("Filter axis Position:", pos_now.strip(), "mm")
-        except: return None
-    return esp
 
 
 import serial
 import time
+import pyvisa
 
-def send_cmd(drive, command):
+# ==========================================
+# 1. Serial Device (Filter Wheel & Lights)
+# ==========================================
+
+def send_cmd(drive, command, delay=0.05):
+    """Sends a command and reads the response, with a small safety delay."""
     drive.write(f"{command}\r".encode('ascii'))
+    time.sleep(delay)
     return drive.read_until(b'\r').decode('ascii').strip()
 
-def Power_apds(drive, state):
-    send_cmd(drive, "IL1" if state else "IH1")
+def power_apds(drive, state):
+    """Robust APD power toggle. Sends command twice to ensure it registers."""
+    cmd = "IL1" if state else "IH1"
+    send_cmd(drive, cmd)
+    time.sleep(0.1)
+    send_cmd(drive, cmd) # Double-send for hardware robustness
 
 def power_whitelight(drive, state):
-    send_cmd(drive, "IL1") 
+    """Toggles white light without accidentally triggering APD commands."""
     if state:
-        time.sleep(1) 
         send_cmd(drive, "IL2")
     else:
         send_cmd(drive, "IH2")
 
 def seek_home_precise(drive):
-    """
-    Micro-steps to the sensor edge and sets it as absolute zero (SP0).
-    Does NOT execute any offset movements.
-    """
+    """Micro-steps to the sensor edge and sets it as absolute zero (SP0)."""
     send_cmd(drive, "SK")
     time.sleep(0.1)
-    
     send_cmd(drive, "VE10.0")
     
     while True:
@@ -458,60 +538,161 @@ def seek_home_precise(drive):
         send_cmd(drive, "FL")
         time.sleep(0.01)
         
-    # Lock in true absolute zero exactly on the sensor edge
     send_cmd(drive, "SP0")
     time.sleep(0.1)
 
 def filterwheel(slot, offset=11.224, home_first=False, apd_final_state=False, wlight_final_state=False):
+    """Moves the filter wheel and returns a state dictionary."""
     if slot < 0 or slot > 14:
-        return
+        return {"status": "Error", "msg": "Invalid slot"}
         
-    # Combines slot and offset into one single movement calculated from the sensor edge
     target_steps = int(-(slot + offset) * 1400)
     
     try:
         with serial.Serial(port='COM4', baudrate=38400, timeout=1) as drive:
-            
+            # Power down sensitive equipment during move
             power_whitelight(drive, False)
-            Power_apds(drive, False)
+            power_apds(drive, False)
             
             if home_first:
                 seek_home_precise(drive)
 
-            # Revert to safe LabVIEW speed for the long move
             send_cmd(drive, "VE1.0") 
             send_cmd(drive, f"FP{target_steps}")
             
             time.sleep(0.2)
             while True:
-                if "0009" in send_cmd(drive, "SC"):
+                if "0009" in send_cmd(drive, "SC", delay=0.1):
                     break
-                time.sleep(0.05)
             
-            Power_apds(drive, apd_final_state)
+            # Restore desired states after move
+            power_apds(drive, apd_final_state)
             if not apd_final_state:
                 power_whitelight(drive, wlight_final_state)
                 
-    except serial.SerialException:
-        pass
+            return {
+                "Slot": slot,
+                "APD_Power": "ON" if apd_final_state else "OFF",
+                "White_Light": "ON" if (wlight_final_state and not apd_final_state) else "OFF"
+            }
+            
+    except serial.SerialException as e:
+        print(f"Serial connection failed: {e}")
+        return {"Slot": "Unknown", "APD_Power": "Unknown", "White_Light": "Unknown"}
 
-def set_detection(state, Homefirst=False, apd_final_state=False, wlight_final_state=False,offset=11.224):
-    if state == "camera":
-        filterwheel(0, offset=offset, home_first=Homefirst, apd_final_state=apd_final_state, wlight_final_state=wlight_final_state)
-        filter_switch(moveto="no")
-        detector_switch(moveto="camera")
-    elif state == "apd":
-        filterwheel(10, offset=offset, home_first=Homefirst, apd_final_state=apd_final_state, wlight_final_state=False)
-        filter_switch(moveto="n405")
-        detector_switch(moveto="apd")
-    elif state == "spectro":
-        filterwheel(1, offset=offset, home_first=Homefirst, apd_final_state=apd_final_state, wlight_final_state=False)
-        filter_switch(moveto="n405")
-        detector_switch(moveto="spectro")
+# ==========================================
+# 2. ESP Controller (Detection & Filters)
+# ==========================================
+
+def move_esp_axis(esp, axis, target_pos, axis_name, showcmd=False):
+    """Smart polling function that moves an axis and waits exactly until it arrives."""
+    try:
+        if showcmd:
+            print(f"{axis_name} axis moving to {target_pos}mm...")
+        
+        esp.write(f"{axis}PA{target_pos}")
+        
+        # Smart Polling Loop instead of time.sleep(5)
+        timeout = 15.0 
+        start_time = time.time()
+        pos_now = 0.0
+        
+        while time.time() - start_time < timeout:
+            response = esp.query(f"{axis}TP?").strip()
+            if response:
+                pos_now = float(response)
+                # If we are within 0.01mm of target, we have arrived
+                if abs(pos_now - target_pos) < 0.01:
+                    break
+            time.sleep(0.2) # Check 5 times a second
+            
+        if showcmd:
+            print(f"{axis_name} axis arrived at: {pos_now} mm")
+        return pos_now
+        
+    except Exception as e:
+        print(f"ESP communication error on {axis_name}: {e}")
+        return "Error"
+
+def detector_switch(esp, moveto='camera', showcmd=False):
+    targets = {'apd': 0.0, 'spectro': -49.0, 'camera': 47.5}
+    if moveto not in targets: return "Invalid"
+    return move_esp_axis(esp, axis=3, target_pos=targets[moveto], axis_name="Detection", showcmd=showcmd)
+
+def filter_switch(esp, moveto='no', showcmd=False):
+    targets = {'no': -24.0, 'n405': 0.0, 'n533': 25.0}
+    if moveto not in targets: return "Invalid"
+    return move_esp_axis(esp, axis=2, target_pos=targets[moveto], axis_name="Filter", showcmd=showcmd)
+
+# ==========================================
+# 3. Master Integration
+# ==========================================
+
+def set_detection(state, home_first=False, apd_final_state=False, wlight_final_state=False, offset=11.224):
+    """
+    Coordinates all hardware and prints a complete state output table.
+    """
+    print(f"\n--- Initiating Hardware Shift to: [{state.upper()}] ---")
+    
+    # 1. Manage Serial Filter Wheel & Lights
+    configs = {
+        "camera":  {"slot": 0,  "filter": "no",   "detector": "camera"},
+        "apd":     {"slot": 10, "filter": "n405", "detector": "apd"},
+        "spectro": {"slot": 1,  "filter": "n405", "detector": "spectro"}
+    }
+    
+    if state not in configs:
+        print("Error: Unknown detection state requested.")
+        return
+        
+    cfg = configs[state]
+    
+    serial_status = filterwheel(
+        slot=cfg["slot"], 
+        offset=offset, 
+        home_first=home_first, 
+        apd_final_state=apd_final_state, 
+        wlight_final_state=wlight_final_state
+    )
+    
+    # 2. Manage ESP Axes
+    det_pos, filt_pos = "Unknown", "Unknown"
+    
+    try:
+        rm = pyvisa.ResourceManager()
+        esp = rm.open_resource("GPIB1::7::INSTR")
+        esp.timeout = 2000 # Set 2s timeout for reliable queries
+        
+        filt_pos = filter_switch(esp, moveto=cfg["filter"], showcmd=False)
+        det_pos = detector_switch(esp, moveto=cfg["detector"], showcmd=False)
+        
+        esp.close()
+    except Exception as e:
+        print(f"Warning: Could not connect to ESP Controller. {e}")
+
+    # 3. Output Final Hardware State
+    print("\n" + "="*45)
+    print("      CURRENT HARDWARE SYSTEM STATE      ")
+    print("="*45)
+    print(f" Target Mode        : {state.upper()}")
+    print(f" Filter Wheel Slot  : {serial_status['Slot']}")
+    print(f" Filter Axis Pos    : {filt_pos} mm")
+    print(f" Detection Axis Pos : {det_pos} mm")
+    print(f" APD Power State    : {serial_status['APD_Power']}")
+    print(f" White Light State  : {serial_status['White_Light']}")
+    print("="*45 + "\n")
+    
+    return {
+        "mode": state,
+        "wheel_slot": serial_status['Slot'],
+        "filter_axis_mm": filt_pos,
+        "detect_axis_mm": det_pos,
+        "apd_power": serial_status['APD_Power'],
+        "white_light": serial_status['White_Light']
+    }
 
 
-
-def start_attocube(amc_address='amc100num-a01-0248.local'):
+def start_attocube(amc_address='amc100num-a01-0248.local',showcmd=False):
     """
     Initializes and connects to an AMC positioner.
     Args:
@@ -531,7 +712,8 @@ def start_attocube(amc_address='amc100num-a01-0248.local'):
             amc.control.setControlOutput(axis, True)
             amc.control.setControlMove(axis, True)
             
-        print(f"Using AMC : {amc_address}")
+        if showcmd: 
+            print(f"Using AMC : {amc_address}")
         # Return the connected device object so it can be used later
         return amc
     
@@ -549,7 +731,7 @@ def amc_disable():
         amc.control.setControlMove(axis, False)
         print(f"Disabled: Axis {axis}")
     amc.close()
-def close_device_all(sn=None, amc=None,showcmd=True, daq=None, t_ch1=None, t_ch2=None, spectro=None, camera=None):
+def close_device_all(sn=None, amc=None,showcmd=True, daq=None, t_ch1=None, t_ch2=None, spectro=None, camera=None,laser=None):
     try:
         if amc:
             amc.close()
@@ -568,10 +750,12 @@ def close_device_all(sn=None, amc=None,showcmd=True, daq=None, t_ch1=None, t_ch2
                 t_ch2.stop()
             if showcmd:
                 print("DAQ closed.") 
-        if camera is not None:
+        if camera:
             unload(camera)
-        if spectro is not None:
+        if spectro:
             unload(spectro)
+        if laser:
+            unload(laser)
     except:
         print("Nothing to close.")
         return None
@@ -716,25 +900,32 @@ def run_focus_sweep(fbase=None, fstep=0.1, fsize=30, movetobest=True, showplt=Tr
         # Close devices only if they were opened locally within this function.
         if sn_local and sn: close_device_all(sn=sn)
         if amc_local and amc: close_device_all(amc=amc)
+import os
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
 def run_pl_scan(center_x=None, center_y=None, center_f=None,
                 focus_sweep=False, f_size=50,
                 x_size=5, y_size=5, step=0.1,
-                detector_config=2,
+                detector_config=2, min_signal=100,
                 logz=False,
+                ide=None,
                 out_dir_base=r'D:\Data_Python_PL\PLmaps',
                 show_plot=True,
                 waits=0,
                 amc=None, sn=None, d1=None, d2=None):
     """
     Performs a 2D photoluminescence scan. Manages its own device lifecycle
-    if handles are not provided, making it suitable for single calls or loops.
+    and includes a 10-second APD health pre-check to prevent dead scans.
     """
     amc_local = False
     sn_local = False
     data_file_handle = None
 
     try:
-        # === Initialize Devices (if not provided) ===
+        # === 1. Initialize Devices (if not provided) ===
         if amc is None:
             amc = start_attocube()
             if amc is None: raise ConnectionError("Failed to start Attocube.")
@@ -745,8 +936,7 @@ def run_pl_scan(center_x=None, center_y=None, center_f=None,
             if sn is None: raise ConnectionError("Failed to start APDs.")
             sn_local = True
 
-        # === Setup Scan Area, Output, and Focus ===
-        
+        # === 3. Setup Scan Area, Output, and Focus ===
         center_x = center_x if center_x is not None else amc.move.getPosition(0) / 1000
         center_y = center_y if center_y is not None else amc.move.getPosition(2) / 1000
         x_start, x_end = center_x - (x_size / 2), center_x + (x_size / 2)
@@ -765,15 +955,15 @@ def run_pl_scan(center_x=None, center_y=None, center_f=None,
         
         if focus_sweep:
             print(f"Running focus sweep around: {fnow:.2f} µm")
-            # Pass existing handles and set 'engaged=True' to prevent closing.
-            amc
             best_f = run_focus_sweep(fbase=fnow, sn=sn, amc=amc, d1=d1, d2=d2,
                                      movetobest=True, showplt=False, fsize=f_size, engaged=True)
             fnow = best_f
             time.sleep(5)
-        center_f = fnow # Final focus position
+            
+        center_f = fnow 
         print(f"Initial pos (x,y,z) :  ({center_x:.2f}, {center_y:.2f}, {center_f:.2f}) µm")
-        # === Setup Plot and Data File ===
+        
+        # === 4. Setup Plot and Data File ===
         x_pos, y_pos = np.arange(x_start, x_end + step, step), np.arange(y_start, y_end + step, step)
         Z = np.zeros((len(y_pos), len(x_pos)), dtype=float)
         extent = [x_start, x_end, y_start, y_end]
@@ -787,8 +977,8 @@ def run_pl_scan(center_x=None, center_y=None, center_f=None,
         ax1.set_title('PL map'); fig.tight_layout()
 
         timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
-        plot_file = os.path.join(out_dir, f'plmap_plot_{timestamp}.png')
-        data_file = os.path.join(out_dir, f'plmap_data_{timestamp}.txt')
+        plot_file = os.path.join(out_dir, f'plmap_plot{f"_{ide}" if ide is not None else ""}_{timestamp}.png')
+        data_file = os.path.join(out_dir, f'plmap_data{f"_{ide}" if ide is not None else ""}_{timestamp}.txt')
 
         print(f'Saving data to: {data_file}')
         data_file_handle = open(data_file, 'w')
@@ -796,7 +986,7 @@ def run_pl_scan(center_x=None, center_y=None, center_f=None,
         data_file_handle.write(f'# readback numpy shape for line part: {len(x_pos)}, {len(y_pos)} \n')
         data_file_handle.write('# x_req\ty_req\tx_act\ty_act\tcount1\tcount2\ttotal\n')
 
-        # === Start Scan Loop ===
+        # === 5. Start Scan Loop ===
         max_int, best_x, best_y = -1, x_start, y_start
         total_points = len(x_pos) * len(y_pos)
         point_counter = 0
@@ -820,15 +1010,8 @@ def run_pl_scan(center_x=None, center_y=None, center_f=None,
 
                 Z[i, j] = np.log10(total + 1) if logz else total
 
-                # Always compare raw counts to find the true maximum
                 if total > max_int:
                     max_int, best_x, best_y = total, x_act, y_act
-                #if total>2000000:
-                #    print(f"Total counts exceded set limit(1M) : {total}")
-                #    print(f"Moving to scan start location")
-                #    amc.move.setControlTargetPosition(0, int(x_start * 1000)); wait_until_stable(amc, axis=0)
-                #    amc.move.setControlTargetPosition(2, int(y_start * 1000)); wait_until_stable(amc, axis=2)
-                #    raise Exception(f"Max counts reached {total}: Reduce power")
 
                 data_file_handle.write(f'{x:.3f}\t{y:.3f}\t{x_act:.3f}\t{y_act:.3f}\t{cnt[d1]}\t{cnt[d2]}\t{total}\n')
 
@@ -855,13 +1038,13 @@ def run_pl_scan(center_x=None, center_y=None, center_f=None,
         print(f"\nA critical error occurred during PL scan: {e}")
         return None, None, None
     except KeyboardInterrupt as k:
-        print(f"Keyboard interrupt : {k}")
-        print(f"Keyboard interrupt : Moving to initial position ---")
+        print(f"\nKeyboard interrupt : {k}")
+        print(f"Moving to initial position ---")
         amc.move.setControlTargetPosition(0, int(center_x * 1000)); wait_until_stable(amc, axis=0)
         amc.move.setControlTargetPosition(2, int(center_y * 1000)); wait_until_stable(amc, axis=2)
         return None, None, None    
     finally:
-        # === Cleanup Resources ===
+        # === 6. Cleanup Resources ===
         print("\n--- Cleaning up PL scan resources ---")
         if data_file_handle:
             data_file_handle.close(); print("Data file closed.")
@@ -1159,222 +1342,6 @@ def run_pl_scan_daq(center_x=0, center_y=0, center_f=None,
         if amc_local and amc: close_device_all(amc=amc)
 
     return best_x, best_y, center_f
-def run_focus_plane_model(cal_distance=500, amc=None, sn=None, d1=None, d2=None, engaged=False):
-    """
-    Calibrates the sample's focus plane by measuring the optimal focus at three
-    distinct points and solving for the plane equation z = ax + by + c.
-
-    Args:
-        cal_distance (float): The distance (µm) for the calibration triangle sides.
-        amc (AMC.Device, optional): Existing AMC controller object. If None, one will be created.
-        sn (snAPI, optional): Existing detector object. If None, one will be created.
-        d1, d2 (int, optional): Detector channel numbers.
-        engaged (bool): If True, leaves devices open on exit. Defaults to False.
-
-    Returns:
-        tuple (a, b, c) or None: The coefficients of the plane equation on success, else None.
-    """
-    try:
-        # --- Initialize Devices if not provided ---
-        if amc is None:
-            amc = start_attocube()
-        if sn is None:
-            sn, d1, d2 = start_apds(detector_config=2)
-
-        x_axis, y_axis = 0, 2
-        print("\n--- Starting Focus Plane Calibration ---")
-
-        # --- Define the three calibration points ---
-        x_start = amc.move.getPosition(x_axis) / 1000
-        y_start = amc.move.getPosition(y_axis) / 1000
-        
-        points_xy = [
-            (x_start, y_start),
-            (x_start + cal_distance, y_start),
-            (x_start, y_start + cal_distance)
-        ]
-        points_3d = []
-
-        # --- Find the optimal Z focus at each point ---
-        for i, (x, y) in enumerate(points_xy):
-            print(f"\nCalibrating Point {i+1}/3 at (X={x:.2f}, Y={y:.2f})...")
-            amc.move.setControlTargetPosition(x_axis, int(x * 1000))
-            amc.move.setControlTargetPosition(y_axis, int(y * 1000))
-            wait_until_stable(amc, x_axis)
-            wait_until_stable(amc, y_axis)
-
-            # Run a focus sweep, keeping devices engaged
-            best_z = run_focus_sweep(amc=amc, sn=sn, d1=d1, d2=d2, 
-                                     fsize=50, fstep=0.1, movetobest=True, 
-                                     showplt=False, engaged=True)
-            points_3d.append((x, y, best_z))
-            print(f"-> Best focus Z found at: {best_z:.2f} µm")
-
-        # --- Solve for the plane equation z = ax + by + c ---
-        print("\n--- Measured Calibration Points (X, Y, Z) ---")
-        for p in points_3d:
-            print(f"  ({p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f})")
-
-        M = np.array([[p[0], p[1], 1] for p in points_3d])
-        z_vector = np.array([p[2] for p in points_3d])
-        
-        try:
-            coeffs = np.linalg.solve(M, z_vector)
-            a, b, c = coeffs
-            print("\n--- Plane Equation Solved ---")
-            print(f"Equation: z = {a:.6f}*x + {b:.6f}*y + {c:.2f}")
-            return a, b, c
-        except np.linalg.LinAlgError:
-            print("ERROR: Could not solve for the plane. Points may be collinear.")
-            return None
-
-    except Exception as e:
-        print(f"An error occurred during focus plane calibration: {e}")
-        return None
-    finally:
-        if not engaged:
-            print("\n--- Closing devices from plane calibration ---")
-            close_device_all(sn=sn, amc=amc)            
-def run_pl_scan_focusplanemodel(center_x=0, center_y=0, x_size=5, y_size=5, step=1,
-                                detector_config=2, logz=False,
-                                out_dir_base='C:/Users/iq-qfl/Documents/Gaurang/GitHub/git_codes/PlotBasic/Output/PLmaps_autofocus',
-                                show_plot=True, cal_distance=500,
-                                plane_coeffs=None,
-                                amc=None, sn=None, d1=None, d2=None):
-    """
-    Performs a PL map scan with dynamic focus correction based on a 3-point plane model.
-
-    If `plane_coeffs` are provided, it uses them directly. Otherwise, it runs a new
-    calibration routine automatically before starting the scan. It can operate with
-    pre-initialized device objects or handle initialization and cleanup internally.
-
-    Args:
-        center_x, center_y (float): Center position of the scan (µm).
-        x_size, y_size (float): Total dimensions of the scan area (µm).
-        step (float): Distance between scan points (µm).
-        detector_config (int): Detector configuration (1 or 2).
-        logz (bool): If True, plots and saves the Z-axis data on a log10 scale.
-        out_dir_base (str): Base directory to save the output.
-        show_plot (bool): If True, displays the plot after the scan is complete.
-        cal_distance (float): Distance for the focus plane calibration triangle (µm).
-        plane_coeffs (tuple, optional): Pre-calculated plane coefficients (a, b, c).
-                                         If None, a new calibration is performed.
-        amc (AMC.Device, optional): An existing, engaged AMC controller object.
-        sn (snAPI, optional): An existing, engaged detector object.
-        d1, d2 (int, optional): Detector channel numbers for the existing sn object.
-    """
-    try:
-        # --- Initialize Devices if not provided ---
-        if amc is None:
-            amc = start_attocube()
-        if sn is None:
-            sn, d1, d2 = start_apds()
-        if not sn or not amc:
-            raise ConnectionError("Failed to start one or more devices.")
-
-        # --- Calibrate Focus Plane if needed ---
-        if plane_coeffs is None:
-            print("No plane coefficients provided, running new calibration...")
-            amc.move.setControlTargetPosition(0, int(center_x * 1000))
-            amc.move.setControlTargetPosition(2, int(center_y * 1000))
-            wait_until_stable(amc, 0)
-            wait_until_stable(amc, 2)
-            
-            plane_coeffs = run_focus_plane_model(cal_distance=cal_distance, amc=amc, sn=sn, d1=d1, d2=d2, engaged=True)
-            if plane_coeffs is None:
-                raise RuntimeError("Focus plane calibration failed. Aborting scan.")
-        else:
-            print("Using provided plane coefficients.")
-
-        a, b, c = plane_coeffs
-        
-        # --- Grid and Plot Setup ---
-        x_start, x_end = center_x - (x_size / 2), center_x + (x_size / 2)
-        y_start, y_end = center_y - (y_size / 2), center_y + (y_size / 2)
-        out_dir = output_dir_folder(base_dir=out_dir_base)
-
-        x_pos = np.arange(x_start, x_end + step, step)
-        y_pos = np.arange(y_start, y_end + step, step)
-        Z = np.zeros((len(y_pos), len(x_pos)))
-        extent = [x_start, x_end, y_start, y_end]
-
-        plt.ion()
-        fig, ax1 = plt.subplots()
-        img1 = ax1.imshow(Z, cmap='plasma', origin='lower', extent=extent, aspect='auto')
-        cb1 = fig.colorbar(img1, ax=ax1, format=mticker.FuncFormatter(lambda x, _: f'{x / 1000:.1f}k' if x >= 1000 else str(int(x))))
-        ax1.set_xlabel('X (µm)'); ax1.set_ylabel('Y (µm)')
-        ax1.set_xlim(x_start, x_end); ax1.set_ylim(y_start, y_end)
-        ax1.invert_xaxis(); ax1.invert_yaxis()
-
-        # --- Output File Setup ---
-        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
-        plot_file = os.path.join(out_dir, f'plmap_af_plot_{timestamp}.png')
-        data_file = os.path.join(out_dir, f'plmap_af_data_{timestamp}.txt')
-        data_file_handle = open(data_file, 'w')
-        data_file_handle.write(f'# Auto-Focus PL Mapping - {timestamp}\n')
-        data_file_handle.write(f'# Center: ({center_x}, {center_y}), Size: ({x_size}, {y_size}), Step: {step}\n')
-        data_file_handle.write(f'# Plane Equation: z = {a:.6f}*x + {b:.6f}*y + {c:.2f}\n')
-        data_file_handle.write('# x_req\ty_req\tz_calc\tx_act\ty_act\tz_act\tcount1\tcount2\ttotal\n')
-        
-        # --- Scan Loop with Dynamic Focus ---
-        total_points = len(x_pos) * len(y_pos)
-        point_counter = 0
-        start_time = time.time()
-        max_int, best_x, best_y = 0, x_start, y_start
-
-        for i, y in enumerate(y_pos):
-            # Serpentine scan path for efficiency
-            x_scan_pos = x_pos if i % 2 == 0 else x_pos[::-1]
-            for j_scan, x in enumerate(x_scan_pos):
-                j = j_scan if i % 2 == 0 else len(x_pos) - 1 - j_scan
-                
-                # *** DYNAMIC FOCUS CALCULATION AND MOVE ***
-                target_z = a * x + b * y + c
-                amc.move.setControlTargetPosition(0, int(x * 1000))
-                amc.move.setControlTargetPosition(2, int(y * 1000))
-                amc.move.setControlTargetPosition(1, int(target_z * 1000))
-                wait_until_stable(amc, 0)
-                wait_until_stable(amc, 2)
-                wait_until_stable(amc, 1)
-
-                # --- Data Acquisition ---
-                x_act = amc.move.getPosition(0) / 1000
-                y_act = amc.move.getPosition(2) / 1000
-                z_act = amc.move.getPosition(1) / 1000
-                cnt = sn.getCountRates()
-                total = cnt[d1] + cnt[d2]
-                total_val = np.log10(total + 1) if logz else total
-                Z[i, j] = total_val
-
-                if total_val > max_int:
-                    max_int, best_x, best_y = total_val, x_act, y_act
-                
-                data_file_handle.write(f'{x:.3f}\t{y:.3f}\t{target_z:.3f}\t{x_act:.3f}\t{y_act:.3f}\t{z_act:.3f}\t{cnt[d1]}\t{cnt[d2]}\t{total}\n')
-
-                # --- Progress Update and Live Plotting ---
-                point_counter += 1
-                elapsed = time.time() - start_time
-                rem = (elapsed / point_counter) * (total_points - point_counter)
-                mins, secs = divmod(int(rem), 60)
-                print(f'Scan: {point_counter}/{total_points} | ETA: {mins}m {secs}s', end='\r')
-
-                img1.set_data(Z)
-                img1.set_clim(vmin=Z.min(), vmax=Z.max())
-                ax1.set_title(f'Auto-Focus PL Map – Max: {max_int:.0f} @ ({best_x:.2f}, {best_y:.2f})')
-                fig.canvas.draw()
-                fig.canvas.flush_events()
-
-        print("\nScan complete.                                       ")
-        plt.ioff()
-        plt.savefig(plot_file)
-        if show_plot: plt.show()
-
-    except Exception as e:
-        print(f"\nA critical error occurred: {e}")
-    finally:
-        print("\n--- Cleaning up resources ---")
-        if data_file_handle: data_file_handle.close(); print("Data file closed.")
-        close_device_all(sn=sn,amc=amc)
 def multi_run_plscan():
     # === DEFINE YOUR SCAN JOBS HERE ===
     scan_jobs = [
@@ -1414,49 +1381,51 @@ def multi_run_plscan():
             print("Continuing with the next job.")
 
     print("\nAll scan jobs are complete.")
+
+
 def run_pl_position_optimizer(scan_size=2, scan_step=0.1, movetoxy=True, run_focus_sweep=False, show_plot=True,
-                            sn=None, d1=None, d2=None, amc=None, detector_config=2):
+                              sn=None, d1=None, d2=None, ide=None, amc=None, detector_config=2):
     """
-    Runs a small PL scan to find the brightest spot. Can be used as a standalone
-    tool (showing a plot) or as a data provider for other functions.
-    
-    Returns:
-        tuple: Best X, Y, and F coordinates.
+    Runs a PL scan to find the brightest spot. 
+    Delegates the heavy lifting and hardware safety checks to run_pl_scan.
     """
     sn_local = False
     amc_local = False
-    
     bx, by, bf = None, None, None
 
     try:
-        # --- Robust Device Initialization ---
+        # --- 1. Device Initialization ---
         if sn is None:
             sn, d1, d2 = start_apds(detector_config=detector_config)
             if sn is None: raise ConnectionError("Optimizer failed to start APDs.")
             sn_local = True
+        elif d1 is None or d2 is None:
+            # Fallback if an existing sn is passed without channels specified
+            d1, d2 = 3, 4 
             
         if amc is None:
             amc = start_attocube()
             if amc is None: raise ConnectionError("Optimizer failed to start Attocube.")
             amc_local = True
 
-        print("Starting position optimization scan...")
         x_now = amc.move.getPosition(0) / 1000
         y_now = amc.move.getPosition(2) / 1000
         f_now = amc.move.getPosition(1) / 1000
+
+        # --- 2. Execute PL Scan ---
+        print("\nStarting position optimization...")
         
-        # run_pl_scan returns 3 values (bx, by, bf)
+        # run_pl_scan will handle the 10-second APD check internally
         bx, by, bf = run_pl_scan(
             center_x=x_now, center_y=y_now, center_f=f_now,
             x_size=scan_size, y_size=scan_size, step=scan_step,
-            focus_sweep=run_focus_sweep,
-            show_plot=show_plot,
-            sn=sn, d1=d1, d2=d2, amc=amc
+            focus_sweep=run_focus_sweep, show_plot=show_plot,
+            sn=sn, d1=d1, d2=d2, amc=amc, ide=ide
         )
 
-        # --- Move to Best Position ---
+        # --- 3. Move to Best Position ---
         if movetoxy and bx is not None:
-            print("Moving to best X-Y position...")
+            print("\nMoving to best X-Y position...")
             amc.move.setControlTargetPosition(0, int(bx * 1000))
             wait_until_stable(amc, 0)
             amc.move.setControlTargetPosition(2, int(by * 1000))
@@ -1464,194 +1433,458 @@ def run_pl_position_optimizer(scan_size=2, scan_step=0.1, movetoxy=True, run_foc
             print("Move complete.")
             
     finally:
-        # --- Cleanup Locally Opened Devices ---
-        if sn_local: 
-            close_device_all(sn=sn)
-        if amc_local: 
-            close_device_all(amc=amc)
+        # --- 4. Cleanup Locally Opened Devices ---
+        if sn_local and sn is not None: 
+            try: close_device_all(sn=sn)
+            except Exception: pass
+        if amc_local and amc is not None: 
+            try: close_device_all(amc=amc)
+            except Exception: pass
             
     return bx, by, bf
-def run_g2(measure_time_s=600, bin_ps=100, window_ps=100000, detector_config=2, inp_hyst = 0, optimize_position=False, save_data=True, output_dir=r'C:/Users/iq-qfl/Documents/Gaurang/GitHub/git_codes/PlotBasic/Output/g2/acquired', sn=None, d1=None, d2=None, amc=None):
-    """
-    Performs a g2 measurement using the specified parameters.
-    Args:
-        measure_time_s (int): Total measurement time in seconds. (600s = 10min as default)
-        bin_ps (int): Time bin size in picoseconds.
-        window_ps (int): Correlation window size in picoseconds.
-        detector_config (int): Detector configuration (1 or 2).
-        inp_hyst (int): Input hysteresis setting for the detector.
-        optimize_position (bool): If True, runs a position optimizer before measurement.
-        save_data (bool): If True, saves the measurement data to a file.
-        output_dir (str): Directory to save output files.
-        sn (snAPI, optional): An existing, engaged detector object.
-        d1, d2 (int, optional): Detector channel numbers for the existing sn object.
-        amc (AMC.Device, optional): An existing, engaged AMC controller object.
-    The output data file is formatted with tab separators.
-    """
-    sn_local = amc_local = False
-    main_fig = None
 
+def g2_measure(time_m=300, save_figure=True, sn=None, detector_config=2, ide=None,det_ch1=None, det_ch2=None, binsize_ps=100, windowsize_ps=100000):
+    """
+    Performs a live g(2) cross-correlation measurement.
+    Wrapped in a kernel-safe structure to prevent memory leaks and DLL locks.
+    """
+    sn_local = False
+    succ = False
+    end_time = time.time() 
+    start_time = time.time()
+    
     try:
         # === 1. Device Initialization ===
-        if sn is None or d1 is None or d2 is None:
-            print("Initializing APDs...")
-            sn, d1, d2 = start_apds(detector_config=detector_config)
-            if sn is None: raise ConnectionError("Failed to start APDs.")
+        if sn is None:
+            # Assuming start_apds returns (sn, d1, d2) when trpl=False
+            result = start_apds(detector_config=detector_config)
+            if result[0] is None: 
+                raise ConnectionError("Failed to start APDs.")
+            
+            sn = result[0]
+            a = result[1]
+            b = result[2]
             sn_local = True
-        a, b = d1, d2
+        else:
+            a = det_ch1
+            b = det_ch2
+            if a is None or b is None:
+                raise ValueError("If passing an existing 'sn', you must specify det_ch1 and det_ch2.")
 
-        # === 2. Run Optimizer (if enabled) ===
-        if optimize_position:
-            if amc is None:
-                print("Initializing Attocube stage controller...")
-                amc = start_attocube()
-                if amc is None: raise ConnectionError("Failed to start Attocube.")
-                amc_local = True
+        mt = time_m 
+        
+        # === 2. File Setup ===
+        output_dir = r'D:\Data_Python_PL\G2data'
+        os.makedirs(output_dir, exist_ok=True)
+        dtnow = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+
+        ptuo = f'g2data_{mt:.0f}s{f"_{ide}" if ide is not None else ""}_{dtnow}.ptu' 
+        g2_filename = os.path.join(output_dir, ptuo)
+        sn.setPTUFilePath(g2_filename)
+        details_filename = os.path.join(output_dir, f"g2details_{mt:.0f}s_{dtnow}.txt")
+        
+        # === 3. Measurement Parameters ===
+        d = binsize_ps          # in ps
+        c = windowsize_ps       # in ps
+
+        sn.correlation.setG2Parameters(a, b, c, d)
             
-            print("\n--- Running Position and Focus Optimizer ---")
-            run_pl_position_optimizer(
-                scan_size=1, scan_step=0.2, movetoxy=True, run_focus_sweep=True,
-                show_plot=True, sn=sn, d1=a, d2=b, amc=amc
-            )
-            print("--- Optimization Finished ---")
-        #sn.device.setInputHysteresis(inp_hyst)
-        # === 3. Plotting and File Setup ===
-        plt.ion()
-        main_fig, (ax_g2, ax_trace) = plt.subplots(1, 2, figsize=(12, 5.5))
-        main_fig.suptitle("g\u00b2(\u03c4) Measurement", fontsize=16)
-
-        stop_button_ax = main_fig.add_axes([0.9, 0.01, 0.08, 0.04])
-        stop_button = Button(stop_button_ax, 'Stop', hovercolor='0.975')
-        stop_button.on_clicked(lambda event: (print("Stop command sent."), sn.correlation.stopMeasure()))
-
-        dt_now = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
-        details_filename = "g2_details_temp.txt" # Default filename
-        if save_data:
-            os.makedirs(output_dir, exist_ok=True)
-            ptu_filename = os.path.join(output_dir, f'g2data_{measure_time_s}s_{dt_now}.ptu')
-            details_filename = os.path.join(output_dir, f"g2details_{measure_time_s}s_{dt_now}.txt")
-            sn.setPTUFilePath(ptu_filename)
-            print(f'\nSaving PTU data to: {os.path.basename(ptu_filename)}')
-
-        # === 4. Start Measurement ===
-        sn.correlation.setG2Parameters(a, b, window_ps, bin_ps)
-        sn.correlation.measure(int(measure_time_s * 1000), savePTU=save_data)
-        start_time = time.time()
+        # Start measurement
+        sn.correlation.measure(int(mt * 1000), savePTU=True)
         start_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f'Starting g(2) measurement for {measure_time_s} s...')
 
-        # --- High-Performance Blitting Plot Setup ---
-        ax_g2.set_xlabel('Time Delay (ns)'); ax_g2.set_ylabel('$g^{(2)}(\\tau)$'); 
-        #ax_g2.grid(True, linestyle=':')
-        line_g2, = ax_g2.plot([], [], lw=0.5, animated=True)
-        ax_g2.set_ylim(0, 2.5)
+        print(f'MH Device : ({sn.deviceConfig["ID"]}) initialized.')
+        print(f'Starting a measurement for {mt} s...')
+        print(f'Using file name: {g2_filename}')
         
-        ax_trace.set_xlabel('Elapsed Time (s)'); ax_trace.set_ylabel('Count Rate (cps)'); 
-        #ax_trace.grid(True, linestyle=':')
-        line_ch1, = ax_trace.plot([], [], 'r-', lw=0.5, label=f"Ch {a}", animated=True)
-        line_ch2, = ax_trace.plot([], [], 'g-', lw=0.5, label=f"Ch {b}", animated=True)
-        ax_trace.legend(loc='upper right')
-        
-        main_fig.tight_layout(rect=[0, 0.05, 0.9, 0.95])
-        main_fig.canvas.draw()
-        bg_g2 = main_fig.canvas.copy_from_bbox(ax_g2.bbox)
-        bg_trace = main_fig.canvas.copy_from_bbox(ax_trace.bbox)
-        
-        times, counts1, counts2 = [], [], []
-        final_g2, final_lagtimes = None, None
+        # Tracking variables
+        elapsed_time_list = []
+        ch1_counts = []
+        ch2_counts = []
+        total_counts = []
+        timestamps = []
+        g2_zero_values = []
 
-        with open(details_filename, 'w') as f:
-            f.write(f"# Measurement Details started at {start_timestamp}\n")
-            f.write(f"# Ch1={a}\tCh2={b}\tWindow={window_ps}ps\tBin={bin_ps}ps\tTime={measure_time_s}s\n\n")
-            f.write(f"# Elapsed Time (s)\tChannel 1 (cps)\tChannel 2 (cps)\tg2(0)\n")
+        start_time = time.time()
 
-            # === 5. Measurement & Fast Plotting Loop ===
-            while not sn.correlation.isFinished():
-                g2, lagtimes = sn.correlation.getG2Data()
-                counts = sn.getCountRates()
+        # === 4. High-Performance Graphing Setup ===
+        plt.ion()
+        fig, axes = plt.subplots(2, 1, figsize=(10, 10))
+        
+        line_g2, = axes[0].plot([], [], label=f'{os.path.basename(g2_filename)}', linewidth=0.5)
+        axes[0].set_xlabel('Time delay (ns)')
+        axes[0].set_ylabel('g2(t)')
+        axes[0].legend(loc='upper right')
+        
+        line_ch1, = axes[1].plot([], [], label="Channel 1", color='b', linewidth=0.5, linestyle='--', marker='o')
+        line_ch2, = axes[1].plot([], [], label="Channel 2", color='r', linewidth=0.5, linestyle='--', marker='s')
+        axes[1].set_xlabel('Elapsed Time (s)')
+        axes[1].set_ylabel('Count Rate')
+        axes[1].legend(loc='upper right')
+
+        # === 5. Main Measurement Loop ===
+        with open(details_filename, 'w') as file:
+            file.write(f"# Measurement Details\n")
+            file.write(f"# Channel 1 = {a}, Channel 2 = {b}, Windows Size = {c} ps, Bin Width = {d} ps\n")
+            file.write(f"# Measurement Time (mt) = {mt} s\n")
+            file.write(f"# Measurement Start Time: {start_timestamp}\n#\n")
+            file.write(f"# Current Time\tElapsed Time (s)\tChannel 1 Counts\tChannel 2 Counts\tTotal Counts\tg2(0)\n")
+
+            last_plot_time = time.time()
+
+            while True:
+                # Replaced time.sleep with plt.pause to keep GUI responsive
+                plt.pause(0.5) 
                 
-                if g2 is None or len(g2) < 1:
-                    plt.pause(0.1); continue
+                try:
+                    finished = sn.correlation.isFinished()
+                    g2, lagtimes = sn.correlation.getG2Data()
+                except Exception:
+                    continue # Skip loop safely if hardware is busy
+                    
+                lagtimes_ns = np.array(lagtimes) * 1e9
                 
-                if not hasattr(counts, '__len__') or len(counts) <= a or len(counts) <= b:
-                    print(f"Warning: Invalid count data: {counts}. Skipping point.")
-                    plt.pause(0.1); continue
-
-                final_g2, final_lagtimes = g2, lagtimes
+                # Check if arrays are valid before operating on them
+                if not isinstance(g2, np.ndarray) or len(g2) == 0:
+                    if finished: break
+                    continue
+                    
+                g2_zero = float(np.min(g2))
+                
+                # Fetch count rates safely
+                try:
+                    cnts = sn.getCountRates()
+                    cntss = cnts[a] + cnts[b]
+                except IndexError:
+                    print(f"Error: Channels ({a}, {b}) exceed hardware count array length.")
+                    break
+                    
                 elapsed_t = time.time() - start_time
-                g2_zero = np.min(g2)
+                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 
-                times.append(elapsed_t); counts1.append(counts[a]); counts2.append(counts[b])
+                # Store data
+                timestamps.append(current_time)
+                elapsed_time_list.append(elapsed_t)
+                ch1_counts.append(cnts[a])
+                ch2_counts.append(cnts[b])
+                total_counts.append(cntss)
+                g2_zero_values.append(g2_zero)
                 
-                f.write(f"{elapsed_t:.2f}\t{counts[a]}\t{counts[b]}\t{g2_zero:.4f}\n")
-                if len(times) % 10 == 0: f.flush()
+                file.write(f"{current_time}\t{elapsed_t:.2f}\t{cnts[a]}\t{cnts[b]}\t{cntss}\t{g2_zero:.2f}\n")
+                file.flush() 
+                
+                c_percent = (elapsed_t * 100) / mt
 
-                raw_percent = (elapsed_t * 100) / measure_time_s
-                percent_done = raw_percent if raw_percent < 100.0 else 100.0
+                # Update plots smoothly
+                if time.time() - last_plot_time >= 1.0 or finished:
+                    line_g2.set_data(lagtimes_ns, g2)
+                    line_ch1.set_data(elapsed_time_list, ch1_counts)
+                    line_ch2.set_data(elapsed_time_list, ch2_counts)
+                    
+                    # --- PYLAB FIX: Using np.maximum instead of max() ---
+                    axes[0].relim()
+                    axes[0].autoscale_view(True, True, True)
+                    axes[0].set_ylim(0, np.maximum(0.1, np.max(g2) * 1.1))
+                    axes[0].set_title(f'g2(t) Correlation (BinWidth = {d} ps & WindowSize = {int(c/1000):.0f} ns) g2(0)={g2_zero: .2f}')
+                    
+                    axes[1].relim()
+                    axes[1].autoscale_view(True, True, True)
+                    # Safely handle the double max for the count arrays
+                    max_ch1 = np.max(ch1_counts) if ch1_counts else 1
+                    max_ch2 = np.max(ch2_counts) if ch2_counts else 1
+                    axes[1].set_ylim(0, np.maximum(max_ch1, max_ch2) * 1.2)
+                    # ----------------------------------------------------
+                    
+                    if elapsed_t < mt:
+                        axes[1].set_title(f'Time trace : {c_percent: .0f}% done (Run-time = {elapsed_t: .0f} / {mt: .0f} s)')
+                    else: 
+                        axes[1].set_title(f'Time trace : Completed (Total Run-time = {mt: .0f} s)')
+                    
+                    fig.canvas.draw()
+                    fig.canvas.flush_events()
+                    last_plot_time = time.time()
                 
-                ax_g2.set_title(f'$g^{{(2)}}(0)$ = {g2_zero:.3f}')
-                ax_trace.set_title(f'Time Trace | {percent_done:.1f}% Done')
-                
-                line_g2.set_data(np.array(lagtimes) / 1000.0, g2)
-                line_ch1.set_data(times, counts1)
-                line_ch2.set_data(times, counts2)
+                if finished:
+                    end_time = time.time()
+                    succ = True
+                    break
+                    
+            end_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            total_runtime = end_time - start_time        
             
-                main_fig.canvas.restore_region(bg_g2)
-                main_fig.canvas.restore_region(bg_trace)
+            # Footer information
+            file.write("#\n")
+            file.write(f"# Measurement End Time: {end_timestamp}\n")
+            file.write(f"# Total Runtime: {total_runtime:.2f} s\n")
+            if succ:
+                file.write(f"# Completion = {succ} \n")        
                 
-                g2_max = np.max(g2)
-                if g2_max > 1.5:
-                    ax_g2.set_ylim(0, g2_max * 1.1)  # Rescale with 10% padding
-                else:
-                    ax_g2.set_ylim(0, 1.5) 
-                
-                #ax_trace.relim(); ax_trace.autoscale_view()
-                
-                ax_g2.relim(); ax_g2.autoscale_view(scalex=True, scaley=False)
-                ax_trace.relim(); ax_trace.autoscale_view()
-                
-                ax_g2.draw_artist(line_g2)
-                ax_trace.draw_artist(line_ch1)
-                ax_trace.draw_artist(line_ch2)
+            if save_figure:
+                figpath = os.path.join(output_dir, f'g2plot_{mt}s_{dtnow}.png')
+                try:
+                    fig.savefig(figpath)
+                    print(f"Figure saved as {figpath}")
+                except Exception as e:
+                    print(f"Error saving figure: {e}")
 
-                main_fig.canvas.blit(ax_g2.bbox)
-                main_fig.canvas.blit(ax_trace.bbox)
-                main_fig.canvas.flush_events()
-                
-                plt.pause(0.01)
-
-            print("Measurement loop ended.")
-
-            # ? FIX LOCATION: This entire block is now correctly placed inside the 'with'
-            # statement, ensuring the file 'f' is still open when this code runs.
-            if save_data and final_g2 is not None:
-                f.write("\n\n# Final g2 data (Time_ps\tNorm_Counts)\n")
-                np.savetxt(f, np.column_stack((final_lagtimes, final_g2)), delimiter='\t')
-                
-                fig_path = os.path.join(output_dir, f'g2plot_{measure_time_s}s_{dt_now}.png')
-                # Redraw figure once without animation for a clean save
-                line_g2.set_animated(False); line_ch1.set_animated(False); line_ch2.set_animated(False)
-                main_fig.canvas.draw()
-                main_fig.savefig(fig_path, dpi=150)
-                print(f"Final plot saved to: {os.path.basename(fig_path)}")
-        
-        # This part of the code now runs after the 'with' block has successfully closed the file.
-        plt.ioff()
-        print("Script finished. The plot window is now static. Close it to exit.")
-        ax_trace.set_title(f'Time Trace | Measurement Complete')
-        plt.show()
-
+    # === 6. Guaranteed Cleanup ===
     except Exception as e:
-        print(f"An error occurred in run_g2: {e}")
-        traceback.print_exc()
+        print(f"\nA critical error occurred: {e}")
+        traceback.print_exc() # Added to reveal hidden bugs
     finally:
-        # === 7. Final Cleanup ===
+        # Added sleep for safe C-DLL thread shutdown
+        if sn is not None:
+            try:
+                sn.correlation.stopMeasure()
+                print("Measurement stopped, clearing buffers...")
+                time.sleep(0.5) 
+            except Exception as stop_err:
+                print(f"Warning during stopMeasure: {stop_err}")
+        if sn_local and sn is not None:
+            try:
+                # If your close function requires 'sn' as a kwarg like before, update this to:
+                # close_device_all(sn=sn)
+                sn.closeDevice(allDevices=True) 
+                print("Device closed successfully.")
+            except Exception as e:
+                print(f"Error closing device: {e}")
+        plt.ioff()
+        plt.show()       
+        
+def estimate_lifetime(time_bins_ns, hist_data):
+    """
+    Estimates the photoluminescence lifetime (tau) using a simple 
+    monoexponential tail fit: y(t) = A * exp(-t / tau) + C
+    """
+    if len(hist_data) < 100 or np.max(hist_data) < 50:
+        return 0.0
+    
+    i_peak = int(np.argmax(hist_data))
+    y_peak = float(hist_data[i_peak])
+    
+    thr_start = 0.7 * y_peak
+    post_peak_indices = np.arange(i_peak, len(hist_data))
+    below_thresh_start = post_peak_indices[hist_data[post_peak_indices] <= thr_start]
+    
+    i0 = int(below_thresh_start[0]) if len(below_thresh_start) > 0 else i_peak + 1
+    if i0 >= len(hist_data): return 0.0
+    
+    thr_end = 0.02 * y_peak
+    below_thresh_end = post_peak_indices[hist_data[post_peak_indices] <= thr_end]
+    i1 = int(below_thresh_end[0]) if len(below_thresh_end) > 0 else len(hist_data)
+    
+    if (i1 - i0) < 10:
+        i1 = len(hist_data) - int(np.maximum(10, int(len(hist_data) * 0.15)))
+    
+    n_tail = int(np.maximum(10, int(len(hist_data) * 0.15)))
+    C = float(np.maximum(0.0, float(np.median(hist_data[-n_tail:])))) 
+    
+    t_fit = time_bins_ns[i0:i1]
+    y_fit = hist_data[i0:i1] - C
+    
+    valid_mask = y_fit > 0.5 
+    if np.sum(valid_mask) < 10: return 0.0
+    
+    x = t_fit[valid_mask]
+    x = x - x[0] 
+    ln_y = np.log(y_fit[valid_mask])
+    
+    xbar, ybar = x.mean(), ln_y.mean()
+    Sxx = np.sum((x - xbar)**2)
+    Sxy = np.sum((x - xbar)*(ln_y - ybar))
+    
+    if Sxx == 0: return 0.0
+    slope = Sxy / Sxx
+    
+    if slope >= 0: return 0.0 
+    
+    tau = -1.0 / slope
+    return tau
+
+
+
+def trpl_measure(time_m=600, sync_offset=20, save_figure=True, sn=None, 
+                 detector_config=3, frequency_mhz=10, update_hz_laser=False, 
+                 laser=None, binsize_ps=10, 
+                 output_dir=r'D:\Data_Python_PL\TRPLdata',ide=None):
+    """
+    Performs a Dual-Channel Time-Resolved Photoluminescence (TRPL) measurement.
+    Dynamically scales binnums based on laser frequency and locks X-axis windows.
+    sync_offset = in ns
+    """
+    sn_local = False
+    laser_local = False
+    succ = False
+    start_time = time.time()
+    ide_suffix = f"_{ide}" if ide is not None else ""
+    
+    # === 1. Handle Frequency Source ===
+    if update_hz_laser:
+        print("Querying laser for current pulse frequency...")
+        if laser is None:
+            try:
+                laser = instruments.picoQuant.PicoQuant_Taiko_PDL_M1()
+                laser_local = True
+            except Exception as e:
+                print(f"Warning: Could not connect to laser to fetch frequency: {e}")
+                
+        if laser is not None:
+            try:
+                freq_hz = get(laser.pulse_burst_freq_Hz)
+                frequency_mhz = freq_hz / 1e6 # Convert Hz to MHz
+                print(f"Successfully fetched frequency from laser: {frequency_mhz:.2f} MHz")
+            except Exception as e:
+                print(f"Warning: Failed to read frequency from laser object: {e}. Falling back to {frequency_mhz} MHz.")
+                
+        if laser_local and laser:
+            try: close_device_all(laser=laser)
+            except Exception: pass
+            laser_local = False
+
+    # === 2. Dynamic Bin Calculation ===
+    period_ps = 1e6 / frequency_mhz
+    binnums = int(period_ps / binsize_ps)
+    print(f"Active Laser Frequency: {frequency_mhz:.1f} MHz | Window: {period_ps / 1000:.1f} ns | Binnums: {binnums}")
+
+    sync_ch, det_ch1, det_ch2 = 0, 3, 4 
+    
+    try:
+        # === 3. Device Initialization ===
+        if sn is None:
+            sn, sync_ch, det_ch1, det_ch2 = start_apds(detector_config=detector_config, trpl=True)
+            if sn is None: 
+                raise ConnectionError("Failed to start APDs.")
+            sn_local = True
+            
+        # === 4. File Setup (TEXT ONLY) ===
+        os.makedirs(output_dir, exist_ok=True)
+        dtnow = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+        
+        # === 5. Start Measurement ===
+        sn.histogram.setRefChannel(sync_ch)
+        sn.histogram.setBinWidth(binsize_ps)
+        sn.histogram.setNumBins(binnums) 
+        sn.device.setSyncChannelOffset(int(sync_offset*1000))
+        
+        # FIX: savePTU=False prevents the 45GB file dump. Data stays in RAM.
+        sn.histogram.measure(int(time_m * 1000), waitFinished=False, savePTU=False)
+
+        print(f'Starting dual-channel TRPL measurement for {time_m} s at {frequency_mhz:.1f} MHz...')
+
+        # === 6. High-Performance Graphing Setup ===
+        plt.ion()
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+        # FIX: Added marker='.' and set linewidth to draw only the top points
+        line_hist1, = axes[0].plot([], [], label=f'Ch {det_ch1}', linewidth=1.0, color='blue', marker='.', markersize=2)
+        axes[0].set_xlabel('Time (ns)')
+        axes[0].set_ylabel('Counts (Log)')
+        axes[0].set_yscale('log')
+        axes[0].set_xlim(left=0, right=period_ps / 1000) 
+        axes[0].grid(True, which='both', alpha=0.3)
+        axes[0].legend(loc='upper right')
+
+        line_hist2, = axes[1].plot([], [], label=f'Ch {det_ch2}', linewidth=1.0, color='red', marker='.', markersize=2)
+        axes[1].set_xlabel('Time (ns)')
+        axes[1].set_ylabel('Counts (Log)')
+        axes[1].set_yscale('log')
+        axes[1].set_xlim(left=0, right=period_ps / 1000) 
+        axes[1].grid(True, which='both', alpha=0.3)
+        axes[1].legend(loc='upper right')
+        
+        fig.tight_layout()
+        fig.subplots_adjust(top=0.88)
+
+        # === 7. Main Measurement Loop ===
+        last_plot_time = time.time()
+
+        while True:
+            plt.pause(2) 
+            
+            try:
+                finished = sn.histogram.isFinished()
+                hist_all_channels, time_bins = sn.histogram.getData()
+            except Exception:
+                continue
+            
+            try:
+                if not isinstance(hist_all_channels, np.ndarray) or hist_all_channels.ndim < 2:
+                    continue 
+                    
+                max_idx = hist_all_channels.shape[0] - 1
+                if det_ch1 > max_idx or det_ch2 > max_idx:
+                    print(f"Warning: Channels ({det_ch1}, {det_ch2}) exceed data shape")
+                    break
+                    
+                hist_data1 = hist_all_channels[det_ch1]
+                hist_data2 = hist_all_channels[det_ch2]
+            except Exception as e:
+                print(f"Data extraction error: {e}")
+                break
+
+            time_bins_ns = np.array(time_bins) / 1000.0 
+            elapsed_t = time.time() - start_time
+            
+            if time.time() - last_plot_time >= 2.0 or finished:
+                line_hist1.set_data(time_bins_ns, np.clip(hist_data1, 1, None))
+                line_hist2.set_data(time_bins_ns, np.clip(hist_data2, 1, None))
+                
+                try: tau1 = estimate_lifetime(time_bins_ns, hist_data1)
+                except Exception: tau1 = 0.0
+                try: tau2 = estimate_lifetime(time_bins_ns, hist_data2)
+                except Exception: tau2 = 0.0
+                
+                axes[0].relim()
+                axes[0].autoscale_view(True, True, True)
+                axes[0].set_ylim(1, np.maximum(10, np.max(hist_data1) * 2))
+                axes[0].set_title(f'Ch {det_ch1} TRPL | $\\tau \\approx$ {tau1:.2f} ns')
+                
+                axes[1].relim()
+                axes[1].autoscale_view(True, True, True)
+                axes[1].set_ylim(1, np.maximum(10, np.max(hist_data2) * 2))
+                axes[1].set_title(f'Ch {det_ch2} TRPL | $\\tau \\approx$ {tau2:.2f} ns')
+                
+                title_text = 'TRPL Measurement Completed' if finished else f'Live TRPL ({elapsed_t:.0f} / {time_m} s)'
+                fig.suptitle(title_text, fontsize=14, fontweight='bold')
+                
+                fig.canvas.draw()
+                fig.canvas.flush_events()
+                last_plot_time = time.time()
+                
+            if finished:
+                succ = True
+                break
+                
+        # === 8. Export Data ===
+        if succ:
+            txt_filename = os.path.join(output_dir, f"trpldata_{frequency_mhz:.1f}MHz_{time_m:.0f}s{ide_suffix}_{dtnow}.txt")
+            
+            # FIX: This perfectly matches your request. Col 0 is Bins, Col 1 is Ch1, Col 2 is Ch2.
+            np.savetxt(txt_filename, np.column_stack((time_bins, hist_data1, hist_data2)), 
+                       delimiter='\t', header=f"Time(ps)\tCh{det_ch1}_Counts\tCh{det_ch2}_Counts")
+            print(f"Final histogram data saved to: {os.path.basename(txt_filename)}")
+
+        if save_figure:
+            figpath = os.path.join(output_dir, f'trplplot_{frequency_mhz:.1f}MHz_{time_m}s{ide_suffix}_{dtnow}.png')
+            try: fig.savefig(figpath)
+            except Exception: pass
+                
+    except Exception as e:
+        print(f"\nA critical error occurred: {e}")
+        traceback.print_exc() 
+    finally:
+        if sn is not None:
+            try:
+                sn.histogram.stopMeasure()
+                time.sleep(0.5) 
+            except Exception: pass
+                
         if sn_local and sn:
-            close_device_all(sn=sn)
-            print("MH150 closed")
-        if amc_local and amc:
-            close_device_all(amc=amc)
-            print("AMC closed")
+            try: close_device_all(sn=sn)
+            except Exception: pass
+                
+        plt.ioff()
+        plt.show()
 def run_g2_from_file(input_file, detector_config=2, output_dir=r'C:/Users/iq-qfl/Documents/Gaurang/GitHub/git_codes/PlotBasic/Output/g2/fildevice', save_data=True, bin=100, window=100000):
     """
     Processes a .ptu file to generate, plot, and save a g2 correlation curve and its data.
@@ -1755,10 +1988,21 @@ def gohome(amc=None):
         amc_move(amc=amc,axis=ax,d=0)
     getposall()
 def start_spectro(spectro_set_cw=484, shutter_init=True,waitfortemp=True,showrange=True):
+    #try:
+    #    spectro = instruments.andor_kymera()
+    #    camera = instruments.andor_iDus()
+    #except: pass
+    #time.sleep(1)
+    #try:
+    #    unload(camera)
+    #    unload(spectro)
+    #except: pass
+    #time.sleep(10)
     spectro = instruments.andor_kymera()
     set(spectro.wavelength_nm, spectro_set_cw)
-    time.sleep(5)
+    time.sleep(1)
     camera = instruments.andor_iDus(spectro_instr=spectro,cooler_temp=-80,shutter_init=shutter_init)
+    time.sleep(5)
     camera.conf(read_mode='full_vertical_binning',exposure_time=5,acq_mode="accumulate", acc_N=2)
     set(camera.cosmic_filter_en, True)
     vbg=None
@@ -1839,10 +2083,6 @@ def take_spectrum(bg=True, vbg=None,
     else:
         return v
 
-import os
-import time
-import numpy as np
-import matplotlib.pyplot as plt
 
 def run_focus_sweep_save(fbase=None, fstep=0.1, fsize=30, movetobest=True, showplt=True, engaged=False, 
                     sn=None, d1=None, d2=None, amc=None, detector_config=2,
@@ -2120,47 +2360,8 @@ def start_kdc(SN="27257399", kdc=None, force=True):
             print(f"ERROR: Failed to connect to KDC motor: {e}")
             return None
 
-def kdc_move_deg(deg, kdc):
-    """
-    Moves the Thorlabs KDC rotation mount to the specified angle in degrees 
-    and waits until movement is complete.
-    
-    Args:
-        deg (float): Target angle in degrees.
-        kdc (Thorlabs.KinesisMotor, optional): Existing KDC motor instance.
-    """
-    kdc_local = False
-    if kdc is None:
-        kdc = start_kdc()
-        kdc_local = True
-        
-    if kdc is None:
-        print("ERROR: KDC motor is not initialized.")
-        return
 
-    # Conversion factor: 1 degree = 1919.6418... steps
-    step = deg * 1919.6418578623391
-    kdc.move_to(step)
-    
-    # Wait until the motor starts moving (if there's a slight hardware delay)
-    time.sleep(0.05)
-    
-    # Wait until movement completes
-    try:
-        while kdc.is_moving():
-            time.sleep(0.01)
-    except Exception:
-        # Fallback if is_moving is a property instead of a method depending on pylablib version
-        while getattr(kdc, 'is_moving', False):
-            time.sleep(0.01)
-
-    if kdc_local and kdc:
-        try:
-            kdc.close()
-        except Exception:
-            pass
-
-def kdc_position_deg(kdc):
+def kdc_position_deg(kdc=None):
     """
     Reads the current position of the Thorlabs KDC rotation mount in degrees.
     
@@ -2187,139 +2388,170 @@ def kdc_position_deg(kdc):
             kdc.close()
         except Exception:
             pass
-
     return current_deg
 
 
-# --- Integrated Polarization PL Measurement ---
-
-def run_pl_polarization(start_deg=0, end_deg=360, step_deg=10, 
-                        detector_config=2, out_dir_base=r'D:\Data_Python_PL\Polarization',
-                        show_plot=True, force_home_kdc=False, kdc=None, amc=None, sn=None, d1=None, d2=None):
+def run_pl_polarization(start_deg=0, end_deg=360, step_deg=2, 
+                        detector_config=2, out_dir_base=r'D:\Data_Python_PL\PolarizationAPD',
+                        show_plot=True, normalize_plot=False, movetobest=False, force_home_kdc=False, 
+                        kdc=None,sn=None, d1=None, d2=None, ide=None, idex=None):
     """
-    Performs a polarization-dependent PL measurement by sweeping a Thorlabs rotation mount 
-    and recording APD count rates at each angle.
-    
-    Args:
-        start_deg (float): Starting angle in degrees.
-        end_deg (float): Ending angle in degrees.
-        step_deg (float): Angle increment step in degrees.
-        detector_config (int): Detector configuration (1 or 2).
-        out_dir_base (str): Base directory to save output data and plots.
-        show_plot (bool): If True, displays the plot after completion.
-        force_home_kdc (bool): If True, passes force=True to start_kdc.
-        kdc, amc, sn, d1, d2: Externally managed device handles (optional).
-        
-    Returns:
-        tuple: (angles_deg, counts_total) arrays.
+    Performs a polarization-dependent PL measurement by sweeping a Thorlabs rotation mount,
+    plotting total APD counts (d1 + d2) in real-time (optionally normalized), and optionally 
+    moving to the best polarization angle if movetobest=True.
     """
     kdc_local = False
-    amc_local = False
     sn_local = False
-    data_file_handle = None
+    actual_angles = []
+    total_counts_list = []
+    ch1_counts_list = []
+    ch2_counts_list = []
 
     try:
-        # === Initialize Devices ===
+        # === 1. Initialize Devices ===
         if kdc is None:
             kdc = start_kdc(force=force_home_kdc)
             if kdc is None: raise ConnectionError("Failed to start Thorlabs KDC motor.")
             kdc_local = True
-
-        if amc is None:
-            amc = start_attocube()
-            if amc is None: raise ConnectionError("Failed to start Attocube.")
-            amc_local = True
 
         if sn is None or d1 is None or d2 is None:
             sn, d1, d2 = start_apds(detector_config=detector_config)
             if sn is None: raise ConnectionError("Failed to start APDs.")
             sn_local = True
 
-        # === Setup Output Directory and Files ===
-        out_dir = output_dir_folder(base_dir=out_dir_base)
+        # === 2. Setup Output Directory and Files ===
         timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
-        data_file = os.path.join(out_dir, f'polarization_data_{timestamp}.txt')
-        plot_file = os.path.join(out_dir, f'polarization_plot_{timestamp}.png')
+        #folder_suffix = f"{f'_{ide}' if ide is not None else ''}{f'_{idex}' if idex is not None else ''}"
+        #sub_folder_name = f"{timestamp}{folder_suffix}"
+        #out_dir = os.path.join(out_dir_base, sub_folder_name)
+        out_dir = output_dir_folder(base_dir=out_dir_base)
+        os.makedirs(out_dir, exist_ok=True)
 
-        print(f'Saving polarization data to: {data_file}')
-        data_file_handle = open(data_file, 'w')
-        data_file_handle.write(f'# Polarization PL Measurement - {timestamp}\n')
-        data_file_handle.write('# Req_Angle(deg)\tAct_Angle(deg)\tCount1\tCount2\tTotal\n')
+        data_file = os.path.join(out_dir, f'polarization_apd_data{f"_{ide}" if ide is not None else ""}_{timestamp}.txt')
+        print(f'Saving polarization APD data to: {data_file}')
 
+        # === 3. Real-Time Graphing Setup ===
         angles = np.arange(start_deg, end_deg + step_deg, step_deg)
-        actual_angles = []
-        ch1_counts = []
-        ch2_counts = []
-        totals = []
-
-        print("\nStarting polarization sweep...")
-        for angle in angles:
-            # Move polarization stage (passing persistent kdc handle if available)
-            kdc_move_deg(angle, kdc=kdc)
-            time.sleep(0.2)  # Allow stage to settle
-            
-            # Read back actual position and counts
-            act_angle = kdc_position_deg(kdc=kdc)
-            cnt = sn.getCountRates()
-            c1, c2 = cnt[d1], cnt[d2]
-            total = c1 + c2
-
-            actual_angles.append(act_angle)
-            ch1_counts.append(c1)
-            ch2_counts.append(c2)
-            totals.append(total)
-
-            data_file_handle.write(f'{angle:.2f}\t{act_angle:.2f}\t{c1}\t{c2}\t{total}\n')
-            print(f'Angle: {act_angle:.1f}° | Total Counts: {total}', end='\r')
-
-        print("\nPolarization sweep complete.")
-
-        # === Plot Results ===
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.plot(actual_angles, totals, 'bo-', lw=2, label='Total Counts')
-        ax.set_xlabel('Polarizer Angle (deg)')
-        ax.set_ylabel('Counts (cps)')
-        ax.set_title(f'Polarization Dependence | {timestamp}')
-        ax.grid(True)
-        ax.legend(loc='upper right')
-
-        plt.tight_layout()
-        plt.savefig(plot_file)
-        print(f"Plot saved to: {plot_file}")
+        total_angles = len(angles)
         
-        if show_plot:
+        plt.ion() # Enable interactive mode for live plotting
+        fig, ax = plt.subplots(figsize=(8, 5))
+        line_tot, = ax.plot([], [], marker='o', color='purple', linewidth=1.5, label='Total Counts (Ch1 + Ch2)')
+        
+        ax.set_xlabel('Polarization Angle (Degrees)')
+        
+        if normalize_plot:
+            ax.set_ylabel('Normalized Intensity (Arb. U.)')
+        else:
+            ax.set_ylabel('Count Rate (cps)')
+            
+        ax.grid(True, alpha=0.3)
+        ax.set_title(f'Live PL Polarization APD Counts | {timestamp}')
+        ax.legend(loc='upper right')
+        fig.tight_layout()
+
+        print(f"\nStarting real-time polarization APD sweep ({total_angles} points)...")
+        start_time = time.time()
+        
+        with open(data_file, 'w') as f:
+            f.write(f"# PL Polarization APD Scan - {timestamp}\n")
+            f.write(f"# Channel 1: {d1}, Channel 2: {d2}\n")
+            f.write("# Angle_Req(deg)\tAngle_Act(deg)\tCh1_Counts\tCh2_Counts\tTotal_Counts\n")
+
+            for idx, angle in enumerate(angles):
+                # Move polarization stage
+                kdc_move_deg(angle, kdc=kdc)
+                
+                # Read back actual position
+                act_angle = kdc_position_deg(kdc=kdc)
+                actual_angles.append(act_angle)
+
+                # Read APD count rates
+                time.sleep(1)  # Allow APDs to settle
+                cnts = sn.getCountRates()
+                c1 = int(cnts[d1]) if len(cnts) > d1 else 0
+                c2 = int(cnts[d2]) if len(cnts) > d2 else 0
+                tot = c1 + c2
+
+                ch1_counts_list.append(c1)
+                ch2_counts_list.append(c2)
+                total_counts_list.append(tot)
+
+                # Write point to file (ALWAYS RAW DATA)
+                f.write(f"{angle:.2f}\t{act_angle:.2f}\t{c1}\t{c2}\t{tot}\n")
+                f.flush()
+
+                # === Update Live Plot ===
+                if normalize_plot and len(total_counts_list) > 0:
+                    max_tot = max(total_counts_list)
+                    plot_data = [c / max_tot for c in total_counts_list] if max_tot > 0 else total_counts_list
+                else:
+                    plot_data = total_counts_list
+                    
+                line_tot.set_data(actual_angles, plot_data)
+                
+                ax.relim()
+                ax.autoscale_view(True, True, True)
+                fig.canvas.draw()
+                fig.canvas.flush_events()
+
+                # Progress & ETA calculation
+                elapsed = time.time() - start_time
+                rem_time = (elapsed / (idx + 1)) * (total_angles - (idx + 1))
+                mins, secs = divmod(int(rem_time), 60)
+                print(f"Progress: {idx+1}/{total_angles} | Angle: {act_angle:.1f}° | Total: {tot} cps | ETA: {mins}m {secs}s", end='\r')
+
+        print("\nPolarization APD sweep complete.")
+
+        # === 4. Find Best Angle & Move if Requested ===
+        best_idx = np.argmax(total_counts_list)
+        best_angle = actual_angles[best_idx]
+        best_counts = total_counts_list[best_idx]
+        print(f"Peak Polarization Found: {best_counts} cps at {best_angle:.1f}°")
+
+        if movetobest:
+            print(f"Moving KDC motor to peak polarization angle: {best_angle:.1f}°...")
+            kdc_move_deg(best_angle, kdc=kdc)
+            time.sleep(0.3)
+            print(f"Current KDC position: {kdc_position_deg(kdc=kdc):.1f}°")
+
+        # === 5. Finalize and Save Plot ===
+        plt.ioff() # Disable interactive mode
+        if show_plot and len(actual_angles) > 0:
+            plot_file = os.path.join(out_dir, f'polarization_apd_plot_{timestamp}.png')
+            fig.savefig(plot_file)
+            print(f"Summary plot saved to: {plot_file}")
             plt.show()
         else:
             plt.close(fig)
 
-        return np.array(actual_angles), np.array(totals)
+        return np.array(actual_angles), np.array(total_counts_list)
 
     except Exception as e:
         print(f"\nA critical error occurred during polarization scan: {e}")
+        traceback.print_exc()
         return None, None
+        
     finally:
+        plt.ioff()
         print("\n--- Cleaning up polarization scan resources ---")
-        if data_file_handle:
-            data_file_handle.close()
         if kdc_local and kdc:
+            if not movetobest:
+                kdc_move_deg(0,kdc=kdc)
             try:
                 kdc.close()
                 print("KDC motor closed.")
             except Exception:
                 pass
-        if sn_local and sn: close_device_all(sn=sn)
-        if amc_local and amc: close_device_all(amc=amc)
-        
-        
-        
-        
-import os
-import time
-import numpy as np
-import matplotlib.pyplot as plt
-
-def run_pl_polarization_spectrum(start_deg=0, end_deg=360, step_deg=10, 
-                        detector_config=2, out_dir_base=r'D:\Data_Python_PL\Polarization',
+        if sn_local and sn:
+            try:
+                close_device_all(sn=sn)
+                print("APDs closed.")
+            except Exception:
+                pass
+            
+            
+def run_pl_polarization_spectrum(start_deg=0, end_deg=360, step_deg=5, out_dir_base=r'D:\Data_Python_PL\Polarization',
                         show_plot=True, force_home_kdc=False, kdc=None, amc=None, 
                         camera=None, bg=True, vbg=None, ide=None, idex=None):
     """
@@ -2448,6 +2680,7 @@ def run_pl_polarization_spectrum(start_deg=0, end_deg=360, step_deg=10,
     finally:
         print("\n--- Cleaning up polarization scan resources ---")
         if kdc_local and kdc:
+            kdc_move_deg(0,kdc=kdc)
             try:
                 kdc.close()
                 print("KDC motor closed.")
@@ -2469,7 +2702,6 @@ def set_spectrum(
     acc_N=2,
     cosmic_filter=True,
 ):
-  # Configure spectrometer wavelength and grating if provided
   if spectro is not None and wl is not None:
     set(spectro.active_grating, int(grating))
     set(spectro.wavelength_nm, int(wl))
@@ -2501,6 +2733,7 @@ def _set_tab20_cycle(ax):
     if not hasattr(ax, '_color_cycle_set'):
         ax.set_prop_cycle(color=TAB20_COLORS)
         ax._color_cycle_set = True
+
 def plot_spectrum(input, compare=False, fig=11, id='Plot'):
     """
     Plots the photoluminescence (PL) spectrum from the input file.
@@ -2529,6 +2762,7 @@ def plot_spectrum(input, compare=False, fig=11, id='Plot'):
 
     ax.set_title('PL Spectrum compare' if compare else os.path.basename(input))
     ax.legend(loc='upper right')
+
 def plot_plmap(fpath, mode='vscode', flog=False, xi=0, yi=1, zi=2, 
                id='Plot', invxy=False, force1d=False, encoding='latin1'):
     """
@@ -2596,6 +2830,7 @@ def plot_plmap(fpath, mode='vscode', flog=False, xi=0, yi=1, zi=2,
     ax.set_title(f'{id}: {os.path.basename(fpath)}')
     #plt.tight_layout()
     plt.show()    
+
 def plot_plmap_3d(input_path, res=50,mode='custom', flog=False, xi=0, yi=2, zi=6, id='Plot',invxy=False):
     """
     Plots a 3D contour map from the input data.
@@ -2679,6 +2914,7 @@ def plot_plmap_3d(input_path, res=50,mode='custom', flog=False, xi=0, yi=2, zi=6
     ax.set_zlabel(f'Z (column {z_index})')
     
     plt.show()
+
 def plot_plmap_poster(
     fpath,
     mode="apd",
@@ -2777,6 +3013,7 @@ def plot_plmap_poster(
 
     plt.tight_layout()
     plt.show()
+
 def plot_polarization(input, polar=True, mode='custom',
                       flog=False, normalize=False,
                       xi=0, yi=4,
@@ -2944,6 +3181,7 @@ def plot_polarization(input, polar=True, mode='custom',
         leg.remove()
 
     return fig, ax, fit_info
+
 def plot_trpl_log(fpath,
                   channel="Ch3",                 # "Ch3" | "Ch4" | "sum"
                   t_max_plot=20.0,               # ns
@@ -3122,6 +3360,7 @@ def plot_trpl_log(fpath,
     }
 
     return fig, ax, fit_dict
+
 def plot_parameters(xi,yi, xr,yr):
     xs=xi-xr/2
     print(f'xstart= {xs}')
@@ -3131,6 +3370,7 @@ def plot_parameters(xi,yi, xr,yr):
     print(f'ystart= {ys}')
     ye=yi+yr/2
     print(f'yend= {ye}')
+
 def start_kdc(SN="27257399", kdc=None, force=False):
     if kdc is not None:
         return kdc
@@ -3164,25 +3404,9 @@ def start_kdc(SN="27257399", kdc=None, force=False):
         except Exception as e:
             print(f"ERROR: Failed to connect to KDC motor: {e}")
             return None
-def kdc_position_deg(kdc=None):
-    kdc_local = False
-    if kdc is None:
-        kdc = start_kdc()
-        kdc_local = True
-        
-    if kdc is None:
-        print("ERROR: KDC motor is not initialized.")
-        return 0.0
 
-    current_steps = kdc.get_position()
-    current_deg = current_steps / 1919.6418578623391
-    
-    if kdc_local and kdc:
-        try:
-            kdc.close()
-        except Exception:
-            pass
-    return current_deg
+
+
 def kdc_move_deg(deg, kdc=None, showcmd=True):
     """
     Moves the Thorlabs KDC rotation mount to the specified angle in degrees.
@@ -3235,120 +3459,7 @@ def kdc_move_deg(deg, kdc=None, showcmd=True):
             kdc.close()
         except Exception:
             pass
-def run_pl_polarization(start_deg=0, end_deg=360, step_deg=10, 
-                        detector_config=2, out_dir_base=r'D:\Data_Python_PL\Polarization',
-                        show_plot=True, force_home_kdc=False, kdc=None, amc=None, sn=None, d1=None, d2=None):
-    """
-    Performs a polarization-dependent PL measurement by sweeping a Thorlabs rotation mount.
-    Features live real-time plotting and instant data-file saves.
-    """
-    kdc_local = False
-    amc_local = False
-    sn_local = False
-    data_file_handle = None
 
-    try:
-        # === Initialize Devices ===
-        if kdc is None:
-            kdc = start_kdc(force=force_home_kdc)
-            if kdc is None: raise ConnectionError("Failed to start Thorlabs KDC motor.")
-            kdc_local = True
-
-        if amc is None:
-            amc = start_attocube()
-            if amc is None: raise ConnectionError("Failed to start Attocube.")
-            amc_local = True
-
-        if sn is None or d1 is None or d2 is None:
-            sn, d1, d2 = start_apds(detector_config=detector_config)
-            if sn is None: raise ConnectionError("Failed to start APDs.")
-            sn_local = True
-
-        # === Setup Output Directory and Files ===
-        out_dir = output_dir_folder(base_dir=out_dir_base)
-        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
-        data_file = os.path.join(out_dir, f'polarization_data_{timestamp}.txt')
-        plot_file = os.path.join(out_dir, f'polarization_plot_{timestamp}.png')
-
-        print(f'Saving polarization data to: {data_file}')
-        data_file_handle = open(data_file, 'w')
-        data_file_handle.write(f'# Polarization PL Measurement - {timestamp}\n')
-        data_file_handle.write('# Req_Angle(deg)\tAct_Angle(deg)\tCount1\tCount2\tTotal\n')
-
-        angles = np.arange(start_deg, end_deg + step_deg, step_deg)
-        actual_angles, ch1_counts, ch2_counts, totals = [], [], [], []
-
-        print("\nStarting polarization sweep...")
-        
-        # === Setup Live Plot ===
-        plt.ion()
-        fig, ax = plt.subplots(figsize=(8, 6))
-        line, = ax.plot([], [], 'bo-', lw=2, label='Total Counts')
-        ax.set_xlabel('Polarizer Angle (deg)')
-        ax.set_ylabel('Counts (cps)')
-        ax.set_title(f'Polarization Dependence | {timestamp}')
-        ax.grid(True)
-        ax.legend(loc='upper right')
-        
-        # Pre-set X axis limits so the plot doesn't jump horizontally
-        ax.set_xlim(start_deg - step_deg, end_deg + step_deg)
-
-        # === Measurement Loop ===
-        for angle in angles:
-            # Move silently, then wait exactly 1 second
-            kdc_move_deg(angle, kdc=kdc, showcmd=False)
-            time.sleep(1.0)  
-            
-            # Take readings
-            act_angle = kdc_position_deg(kdc=kdc)
-            cnt = sn.getCountRates()
-            c1, c2 = cnt[d1], cnt[d2]
-            total = c1 + c2
-
-            actual_angles.append(act_angle)
-            ch1_counts.append(c1)
-            ch2_counts.append(c2)
-            totals.append(total)
-
-            # Write to file and instantly flush the buffer to save it
-            data_file_handle.write(f'{angle:.2f}\t{act_angle:.2f}\t{c1}\t{c2}\t{total}\n')
-            data_file_handle.flush()
-            
-            print(f'Angle: {act_angle:.1f}° | Total Counts: {total}      ', end='\r')
-
-            # Update Live Plot
-            line.set_data(actual_angles, totals)
-            ax.relim()
-            ax.autoscale_view(scalex=False, scaley=True) # Only autoscale Y axis dynamically
-            fig.canvas.draw()
-            fig.canvas.flush_events()
-            plt.pause(0.01)
-
-        print("\nPolarization sweep complete.")
-
-        # === Finalize and Save ===
-        plt.ioff()
-        plt.tight_layout()
-        plt.savefig(plot_file)
-        print(f"Plot saved to: {plot_file}")
-        
-        if show_plot: plt.show()
-        else: plt.close(fig)
-
-        return np.array(actual_angles), np.array(totals)
-
-    except Exception as e:
-        print(f"\nA critical error occurred during polarization scan: {e}")
-        return None, None
-    finally:
-        print("\n--- Cleaning up polarization scan resources ---")
-        if data_file_handle: 
-            data_file_handle.close()
-        if kdc_local and kdc:
-            try: kdc.close(); print("KDC motor closed.")
-            except Exception: pass
-        if sn_local and sn: close_device_all(sn=sn)
-        if amc_local and amc: close_device_all(amc=amc)
 DEFAULT_CRYO_IP = "192.168.0.2"
 _global_cryo = None
 def start_cryo(ip_address=DEFAULT_CRYO_IP, cryo=None):
@@ -3362,8 +3473,10 @@ def start_cryo(ip_address=DEFAULT_CRYO_IP, cryo=None):
     except Exception as e:
         print(f"ERROR: Failed to connect to CryoCore: {e}")
         return None
+
 def _get_cryo_val(res):
     return res[1] if isinstance(res, tuple) else res
+
 def cryo_state(cryo=None):
     c = start_cryo(cryo=cryo)
     if not c: return "Unknown"
@@ -3554,36 +3667,19 @@ def cryo_waitforvent(vent_pressure_threshold=700, cryo=None, timeout_s=600, poll
     print("\nWARNING: Timeout reached waiting for vent.")
     return False
 
-
+# === FIX FOR FORTRAN/MKL CTRL+C CRASH ===
 import sys
 import os
 import time
+import numpy as np
+import matplotlib.pyplot as plt
 
 # === FIX FOR FORTRAN/MKL CTRL+C CRASH ===
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
-import numpy as np
-import matplotlib.pyplot as plt
-
-# === Path Setup for QFLv4 ===
-try:
-    current_dir = os.path.dirname(__file__)
-except NameError:
-    current_dir = os.getcwd()
-
-parent_dir = os.path.abspath(os.path.join(current_dir, '..'))
-if parent_dir not in sys.path:
-    sys.path.append(parent_dir)
-
-pathe = r"D:\Gaurang\GitHub-QFL\tank-QFL\camera-thor\SDK\Python Toolkit\examples"
-if pathe not in sys.path:
-    sys.path.append(pathe)
-    
-import windows_setup
-windows_setup.configure_path()
-
-from QFLv4 import *
+# Assuming the SDK is in your active environment or working directory
 from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
+from thorlabs_tsi_sdk.tl_camera_enums import OPERATION_MODE
 
 def get_peak_intensity(image_array):
     """
@@ -3599,8 +3695,9 @@ def get_peak_intensity(image_array):
     
     return max_val, max_coords, gray_img
 
-def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
-                           camera_serial="11484", exposure_ms=10, 
+
+def run_camera_focus_sweep(center_f=None, f_size=50, step=0.1,
+                           camera_serial="11484", ide=None, exposure_ms=10, 
                            out_dir_base=r'D:\Data_Python_PL\Camera',
                            move_to_best=True, post_sweep_live_feed=True,
                            amc=None):
@@ -3608,282 +3705,11 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
     data_file_handle = None
     best_f = None
     aborted = False
-    exposure_us=exposure_ms*1000
-    try:
-        # === 1. Start AMC ===
-        if amc is None:
-            amc = start_attocube()
-            if amc is None: raise ConnectionError("Failed to start Attocube.")
-            amc_local = True
-
-        fnow = center_f if center_f is not None else amc.move.getPosition(1) / 1000
-        center_f = fnow
-        best_f = center_f  
-
-        # Setup Output Directories
-        out_dir = output_dir_folder(base_dir=out_dir_base)
-
-        # Setup Real-time Plotting
-        plt.ion()
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-        
-        f_start, f_end = center_f - (f_size / 2), center_f + (f_size / 2)
-        f_pos = np.arange(f_start, f_end + step, step)
-        intensity_data = np.zeros(len(f_pos), dtype=float)
-        
-        line1, = ax1.plot(f_pos, intensity_data, 'b-o', markersize=4)
-        ax1.set_xlabel('F / Z (µm)')
-        ax1.set_ylabel('Max Single-Pixel Intensity')
-        ax1.set_title('Focus Sweep Curve')
-        ax1.grid(True, linestyle='--', alpha=0.7)
-        
-        img_display = None
-        ax2.set_title('Live Camera Feed')
-        ax2.axis('off')
-        fig.tight_layout()
-
-        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
-        plot_file = os.path.join(out_dir, f'cam_focus_plot_{timestamp}.png')
-        data_file = os.path.join(out_dir, f'cam_focus_data_{timestamp}.txt')
-
-        data_file_handle = open(data_file, 'w')
-        data_file_handle.write(f'# Camera Focus Sweep - {timestamp}\n# Center F: {center_f}\n')
-        data_file_handle.write('# f_req\tf_act\tintensity\tmax_x\tmax_y\n')
-
-        # === 2. Start Camera inside Context Managers ===
-        with TLCameraSDK() as sdk:
-            available_cameras = sdk.discover_available_cameras()
-            if not available_cameras: raise ConnectionError("No Thorlabs cameras found!")
-            
-            target_serial = next((cam for cam in available_cameras if camera_serial in cam), available_cameras[0])
-            
-            with sdk.open_camera(target_serial) as camera:
-                camera.exposure_time_us = exposure_us
-                camera.frames_per_trigger_zero_for_unlimited = 1
-
-                # === 3. THE DUMMY FRAME FIX ===
-                print("\nClearing stale hardware buffers...")
-                camera.arm(frames_to_buffer=1)
-                camera.issue_software_trigger()
-                time.sleep(0.2)
-                _ = camera.get_pending_frame_or_null() # Throw away the bad first frame
-                camera.disarm()
-                time.sleep(0.1)
-
-                max_int = -1
-                total_points = len(f_pos)
-                point_counter = 0
-
-                print(f"--- Starting Sweep ({f_start:.2f} µm to {f_end:.2f} µm) ---")
-
-                # === SWEEP LOOP ===
-                for i, y in enumerate(f_pos):
-                    amc.move.setControlTargetPosition(1, int(y * 1000))
-                    wait_until_stable(amc, axis=1)
-                    
-                    f_act = amc.move.getPosition(1) / 1000
-                    
-                    camera.arm(frames_to_buffer=1)
-                    camera.issue_software_trigger()
-                    time.sleep(0.5) 
-                    
-                    frame = None
-                    attempts = 0
-                    while frame is None and attempts < 10:
-                        time.sleep(0.1) 
-                        frame = camera.get_pending_frame_or_null()
-                        attempts += 1
-                    
-                    if frame is None:
-                        print(f"Warning: Frame missing at Z={f_act:.2f} µm")
-                        intensity, coords, process_img = 0, (0, 0), np.zeros((10, 10))
-                    else:
-                        imagem = np.asarray(frame.image_buffer)
-                        intensity, coords, process_img = get_peak_intensity(imagem)
-                    
-                    camera.disarm()
-
-                    intensity_data[i] = intensity
-                    if intensity > max_int:
-                        max_int, best_f = intensity, f_act
-
-                    max_y, max_x = coords
-                    data_file_handle.write(f'{y:.3f}\t{f_act:.3f}\t{intensity:.2f}\t{max_x}\t{max_y}\n')
-                    data_file_handle.flush()
-
-                    point_counter += 1
-                    print(f'Scan: {point_counter}/{total_points} | Z: {f_act:.2f} | Peak: {intensity:.0f} at X:{max_x}, Y:{max_y}', end='\r')
-
-                    line1.set_ydata(intensity_data)
-                    ax1.relim()
-                    ax1.autoscale_view()
-                    ax1.set_title(f'Focus Sweep – Max: {max_int:.0f} @({best_f:.2f} µm)')
-                    
-                    # VISIBILITY IMPROVEMENT
-                    if img_display is None:
-                        img_display = ax2.imshow(process_img, cmap='gray', vmin=0)
-                    else:
-                        img_display.set_data(process_img)
-                        # dynamically track the peak without washing out dim lasers
-                        vmax_val = max(10, process_img.max()) 
-                        img_display.set_clim(vmin=0, vmax=vmax_val)
-                        
-                    fig.canvas.draw()
-                    fig.canvas.flush_events()
-
-                print("\n\nScan complete.")
-                
-                # === MOVE TO BEST FOCUS ===
-                target_f = best_f if move_to_best else center_f
-                print(f"Moving to target focus position: {target_f:.2f} µm...")
-                amc.move.setControlTargetPosition(1, int(target_f * 1000))
-                wait_until_stable(amc, axis=1)
-                time.sleep(0.3)
-
-                # === LIVE FEED ===
-                if post_sweep_live_feed:
-                    print(f"\n[LIVE FEED ACTIVE] Stage parked at {target_f:.2f} µm.")
-                    print(">>> PRESS 'CTRL+C' IN THE TERMINAL TO STOP AND CLOSE <<<")
-                    
-                    ax1.set_title(f'Sweep Finished – Parked at {target_f:.2f} µm')
-                    
-                    try:
-                        while True:
-                            camera.arm(frames_to_buffer=1)
-                            camera.issue_software_trigger()
-                            
-                            frame = None
-                            attempts = 0
-                            while frame is None and attempts < 10:
-                                time.sleep(0.05)
-                                frame = camera.get_pending_frame_or_null()
-                                attempts += 1
-                            
-                            if frame is not None:
-                                imagem = np.asarray(frame.image_buffer)
-                                intensity, coords, process_img = get_peak_intensity(imagem)
-                                
-                                img_display.set_data(process_img)
-                                vmax_val = max(10, process_img.max())
-                                img_display.set_clim(vmin=0, vmax=vmax_val)
-                                ax2.set_title(f'Live Camera | Peak: {intensity:.0f}')
-                                
-                                fig.canvas.draw()
-                                fig.canvas.flush_events()
-                                
-                            camera.disarm()
-                    except KeyboardInterrupt:
-                        print("\nKeyboard Interrupt received. Closing live feed...")
-                        aborted = True
-
-    except Exception as e:
-        print(f"\nA critical error occurred: {e}")
-        aborted = True
-    except KeyboardInterrupt:
-        print("\nKeyboard Interrupt received during sweep.")
-        aborted = True
-    finally:
-        print("\n--- Cleaning up resources ---")
-        plt.ioff()
-        if not aborted:
-            plt.savefig(plot_file)
-            print(f"Plot saved to: {plot_file}")
-            
-        plt.close('all') 
-        if data_file_handle: data_file_handle.close()
-        if amc_local and amc:
-            try: amc.close() 
-            except AttributeError: pass
-
-def run_live_camera(camera_serial="11484", exposure_ms=10):
-    exposure_us = exposure_ms * 1000
-    plt.ion()
-    fig, ax = plt.subplots(figsize=(8, 6))
-    img_display = None
+    exposure_us = int(float(exposure_ms) * 1000) 
     
-    try:
-        with TLCameraSDK() as sdk:
-            available_cameras = sdk.discover_available_cameras()
-            if not available_cameras:
-                raise ConnectionError("No Thorlabs cameras found!")
-            
-            target_serial = next((cam for cam in available_cameras if camera_serial in cam), available_cameras[0])
-            
-            with sdk.open_camera(target_serial) as camera:
-                camera.exposure_time_us = exposure_us
-                camera.frames_per_trigger_zero_for_unlimited = 1
-                
-                print(f"\n[COLOUR LIVE FEED ACTIVE] Using camera: {target_serial}")
-                print(">>> PRESS 'CTRL+C' IN THE TERMINAL TO EXIT <<<")
-                
-                while True:
-                    camera.arm(frames_to_buffer=1)
-                    camera.issue_software_trigger()
-                    
-                    frame = None
-                    attempts = 0
-                    while frame is None and attempts < 10:
-                        time.sleep(0.05)
-                        frame = camera.get_pending_frame_or_null()
-                        attempts += 1
-                        
-                    if frame is not None:
-                        img_buf = np.asarray(frame.image_buffer)
-                        
-                        # Handle color processing if data format returns packed/planar RGB elements or mono-to-color
-                        if img_buf.ndim == 2 and hasattr(camera, 'color_filter_array') and camera.color_filter_array is not None:
-                            # Depending on Thorlabs SDK wrapper versions, color conversion can be handled via built-in SDK processors or standard debayering (e.g., cv2)
-                            import cv2
-                            # Fallback interpretation if mono buffer represents raw Bayer pattern from a color sensor
-                            if camera.color_filter_array != 0:
-                                # Example automatic Bayer demosaicing if raw mono buffer is pulled from a color sensor
-                                bayer_cvt = getattr(cv2, 'COLOR_BayerRG2RGB', cv2.COLOR_BayerBG2RGB)
-                                img_rgb = cv2.cvtColor(img_buf, bayer_cvt)
-                            else:
-                                img_rgb = cv2.cvtColor(img_buf, cv2.COLOR_GRAY2RGB)
-                        elif img_buf.ndim == 3:
-                            img_rgb = img_buf # Already multi-channel color
-                        else:
-                            import cv2
-                            img_rgb = cv2.cvtColor(img_buf, cv2.COLOR_GRAY2RGB)
-                            
-                        if img_display is None:
-                            img_display = ax.imshow(img_rgb)
-                            ax.set_title("Live Colour Feed")
-                            ax.axis('off')
-                        else:
-                            img_display.set_data(img_rgb)
-                            
-                        fig.canvas.draw()
-                        fig.canvas.flush_events()
-                        
-                    camera.disarm()
-                    
-    except KeyboardInterrupt:
-        print("\nLive feed stopped by user.")
-    finally:
-        plt.ioff()
-        plt.close('all')
-        
-        
-import os
-import time
-import numpy as np
-import matplotlib.pyplot as plt
-
-def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
-                           camera_serial="11484", exposure_ms=10, 
-                           out_dir_base=r'D:\Data_Python_PL\Camera',
-                           move_to_best=True, post_sweep_live_feed=True,
-                           amc=None):
-    amc_local = False
-    data_file_handle = None
-    best_f = None
-    aborted = False
-    exposure_us = exposure_ms * 1000
-    
-    # Declare loop-scoped variables externally to prevent NameError in finally block
     plot_file = None
+    last_known_shape = (1024, 1024) 
+    points_collected = 0
     
     try:
         # === 1. Start AMC ===
@@ -3892,7 +3718,8 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
             if amc is None: raise ConnectionError("Failed to start Attocube.")
             amc_local = True
 
-        fnow = center_f if center_f is not None else amc.move.getPosition(1) / 1000
+        # Capture the initial position before doing anything
+        fnow = center_f if center_f is not None else float(amc.move.getPosition(1)) / 1000.0
         center_f = fnow
         best_f = center_f  
 
@@ -3919,14 +3746,14 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
         fig.tight_layout()
 
         timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
-        plot_file = os.path.join(out_dir, f'cam_focus_plot_{timestamp}.png')
-        data_file = os.path.join(out_dir, f'cam_focus_data_{timestamp}.txt')
+        plot_file = os.path.join(out_dir, f'cam_focus_plot{f"_{ide}" if ide is not None else ""}_{timestamp}.png')
+        data_file = os.path.join(out_dir, f'cam_focus_data{f"_{ide}" if ide is not None else ""}_{timestamp}.txt')
 
         data_file_handle = open(data_file, 'w')
-        data_file_handle.write(f'# Camera Focus Sweep - {timestamp}\n# Center F: {center_f}\n')
+        data_file_handle.write(f'# Camera Focus Sweep - {timestamp}\n# Initial Center F: {center_f:.3f}\n')
         data_file_handle.write('# f_req\tf_act\tintensity\tmax_x\tmax_y\n')
 
-        # === 2. Start Camera inside Context Managers ===
+        # === 2. Start Camera ===
         with TLCameraSDK() as sdk:
             available_cameras = sdk.discover_available_cameras()
             if not available_cameras: raise ConnectionError("No Thorlabs cameras found!")
@@ -3934,6 +3761,7 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
             target_serial = next((cam for cam in available_cameras if camera_serial in cam), available_cameras[0])
             
             with sdk.open_camera(target_serial) as camera:
+                camera.operation_mode = OPERATION_MODE.SOFTWARE_TRIGGERED
                 camera.exposure_time_us = exposure_us
                 camera.frames_per_trigger_zero_for_unlimited = 1
 
@@ -3948,16 +3776,20 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
 
                 max_int = -1
                 total_points = len(f_pos)
-                point_counter = 0
 
                 print(f"--- Starting Sweep ({f_start:.2f} µm to {f_end:.2f} µm) ---")
 
                 # === SWEEP LOOP ===
                 for i, y in enumerate(f_pos):
-                    amc.move.setControlTargetPosition(1, int(y * 1000))
-                    wait_until_stable(amc, axis=1)
+                    if not plt.fignum_exists(fig.number):
+                        print("\nPlot window closed. Aborting sweep early...")
+                        aborted = True
+                        break
+
+                    amc.move.setControlTargetPosition(1, int(float(y) * 1000))
+                    wait_until_stable(amc, axis=1) 
                     
-                    f_act = amc.move.getPosition(1) / 1000
+                    f_act = float(amc.move.getPosition(1)) / 1000.0
                     
                     camera.arm(frames_to_buffer=1)
                     camera.issue_software_trigger()
@@ -3972,10 +3804,12 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
                     
                     if frame is None:
                         print(f"Warning: Frame missing at Z={f_act:.2f} µm")
-                        intensity, coords, process_img = 0, (0, 0), np.zeros((10, 10))
+                        process_img = np.zeros(last_known_shape) 
+                        intensity, coords = 0, (0, 0)
                     else:
                         imagem = np.asarray(frame.image_buffer)
                         intensity, coords, process_img = get_peak_intensity(imagem)
+                        last_known_shape = process_img.shape
                     
                     camera.disarm()
 
@@ -3987,8 +3821,8 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
                     data_file_handle.write(f'{y:.3f}\t{f_act:.3f}\t{intensity:.2f}\t{max_x}\t{max_y}\n')
                     data_file_handle.flush()
 
-                    point_counter += 1
-                    print(f'Scan: {point_counter}/{total_points} | Z: {f_act:.2f} | Peak: {intensity:.0f} at X:{max_x}, Y:{max_y}', end='\r')
+                    points_collected += 1
+                    print(f'Scan: {points_collected}/{total_points} | Z: {f_act:.2f} | Peak: {intensity:.0f} at X:{max_x}, Y:{max_y}   ', end='\r')
 
                     line1.set_ydata(intensity_data)
                     ax1.relim()
@@ -4006,24 +3840,22 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
                     fig.canvas.draw()
                     fig.canvas.flush_events()
 
-                print("\n\nScan complete.")
+                if not aborted:
+                    print("\n\nScan complete.")
                 
-                # === MOVE TO BEST FOCUS ===
-                target_f = best_f if move_to_best else center_f
-                print(f"Moving to target focus position: {target_f:.2f} µm...")
-                amc.move.setControlTargetPosition(1, int(target_f * 1000))
-                wait_until_stable(amc, axis=1)
-                time.sleep(0.3)
-
                 # === LIVE FEED ===
-                if post_sweep_live_feed:
-                    print(f"\n[LIVE FEED ACTIVE] Stage parked at {target_f:.2f} µm.")
-                    print(">>> PRESS 'CTRL+C' IN THE TERMINAL TO STOP AND CLOSE <<<")
+                if post_sweep_live_feed and not aborted:
+                    target_f = best_f if move_to_best else center_f
+                    print(f"\n[LIVE FEED PENDING] Will park stage at {target_f:.2f} µm...")
+                    amc.move.setControlTargetPosition(1, int(float(target_f) * 1000))
+                    wait_until_stable(amc, axis=1)
                     
+                    print(f"\n[LIVE FEED ACTIVE] >>> PRESS 'CTRL+C' OR CLOSE THE PLOT WINDOW TO EXIT <<<")
                     ax1.set_title(f'Sweep Finished – Parked at {target_f:.2f} µm')
+                    fig.canvas.draw()
                     
                     try:
-                        while True:
+                        while plt.fignum_exists(fig.number):
                             camera.arm(frames_to_buffer=1)
                             camera.issue_software_trigger()
                             
@@ -4058,12 +3890,39 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
     except KeyboardInterrupt:
         print("\nKeyboard Interrupt received during sweep.")
         aborted = True
+    
     finally:
         print("\n--- Cleaning up resources ---")
         plt.ioff()
-        if not aborted and plot_file:
-            plt.savefig(plot_file)
-            print(f"Plot saved to: {plot_file}")
+        
+        # === 4. SAFE HARDWARE PARKING ===
+        if amc is not None and center_f is not None:
+            # If aborted, ignore best_f and force return to the initial starting point
+            if aborted:
+                target_f = center_f
+                print(f"Scan aborted. Returning stage to initial position: {target_f:.2f} µm...")
+            else:
+                target_f = best_f if move_to_best else center_f
+                print(f"Parking stage at target focus position: {target_f:.2f} µm...")
+                
+            try:
+                amc.move.setControlTargetPosition(1, int(float(target_f) * 1000))
+                time.sleep(0.5) 
+                
+                if 'ax1' in locals() and 'fig' in locals() and plt.fignum_exists(fig.number):
+                    status_text = "Aborted" if aborted else "Ended"
+                    ax1.set_title(f'Sweep {status_text} – Parked at {target_f:.2f} µm')
+                    fig.canvas.draw()
+            except Exception as e:
+                print(f"Warning: Could not park stage during cleanup: {e}")
+
+        # Save plot if we collected data
+        if plot_file and points_collected > 0:
+            try:
+                plt.savefig(plot_file)
+                print(f"Plot saved to: {plot_file}")
+            except Exception as e: 
+                print(f"Warning: Failed to save plot: {e}")
             
         plt.close('all') 
         if data_file_handle: data_file_handle.close()
@@ -4071,4 +3930,70 @@ def run_camera_focus_sweep(center_f=None, f_size=10, step=0.1,
             try: amc.close() 
             except AttributeError: pass
 
-# %%
+
+def run_live_camera(camera_serial="11484", exposure_ms=10):
+    exposure_us = int(float(exposure_ms) * 1000)
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(8, 6))
+    img_display = None
+    
+    try:
+        with TLCameraSDK() as sdk:
+            available_cameras = sdk.discover_available_cameras()
+            if not available_cameras:
+                raise ConnectionError("No Thorlabs cameras found!")
+            
+            target_serial = next((cam for cam in available_cameras if camera_serial in cam), available_cameras[0])
+            
+            with sdk.open_camera(target_serial) as camera:
+                camera.operation_mode = OPERATION_MODE.SOFTWARE_TRIGGERED
+                camera.exposure_time_us = exposure_us
+                camera.frames_per_trigger_zero_for_unlimited = 1
+                
+                print(f"\n[LIVE FEED ACTIVE] Using camera: {target_serial}")
+                print(">>> PRESS 'CTRL+C' OR CLOSE WINDOW TO EXIT <<<")
+                
+                while plt.fignum_exists(fig.number):
+                    camera.arm(frames_to_buffer=1)
+                    camera.issue_software_trigger()
+                    
+                    frame = None
+                    attempts = 0
+                    while frame is None and attempts < 10:
+                        time.sleep(0.05)
+                        frame = camera.get_pending_frame_or_null()
+                        attempts += 1
+                        
+                    if frame is not None:
+                        img_buf = np.asarray(frame.image_buffer)
+                        
+                        # Handle color processing
+                        img_rgb = img_buf
+                        if img_buf.ndim == 2:
+                            try:
+                                import cv2
+                                if hasattr(camera, 'color_filter_array') and camera.color_filter_array != 0:
+                                    bayer_cvt = getattr(cv2, 'COLOR_BayerRG2RGB', cv2.COLOR_BayerBG2RGB)
+                                    img_rgb = cv2.cvtColor(img_buf, bayer_cvt)
+                                else:
+                                    img_rgb = cv2.cvtColor(img_buf, cv2.COLOR_GRAY2RGB)
+                            except ImportError:
+                                img_rgb = img_buf 
+                        
+                        if img_display is None:
+                            img_display = ax.imshow(img_rgb, cmap='gray' if img_rgb.ndim == 2 else None)
+                            ax.set_title("Live Camera Feed")
+                            ax.axis('off')
+                        else:
+                            img_display.set_data(img_rgb)
+                            
+                        fig.canvas.draw()
+                        fig.canvas.flush_events()
+                        
+                    camera.disarm()
+                    
+    except KeyboardInterrupt:
+        print("\nLive feed stopped by user.")
+    finally:
+        plt.ioff()
+        plt.close('all')
