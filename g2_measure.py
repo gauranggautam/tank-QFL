@@ -3,6 +3,7 @@ from matplotlib import pyplot as plt
 from datetime import datetime
 import time
 import os
+import numpy as np
 
 #initialize device
 from QFLv5 import start_apds
@@ -16,7 +17,7 @@ cntss = cnts[a] + cnts[b]
 #sn.device.setInputHysteresis(1)
 
 # Measure time in seconds
-mt = 300
+mt = 180
 #in seconds
 succ=False
 sv=True
@@ -31,7 +32,7 @@ sn.setPTUFilePath(g2_filename)
 details_filename = os.path.join(output_dir, f"g2details_{mt:.0f}s_{dtnow}.txt")
 #Parameters for g2
 d= binsize = 100           #in ps
-c= windowsize = 100000     #in ps
+c= windowsize = 50000     #in ps
 
 sn.correlation.setG2Parameters(a, b, c, d)
     

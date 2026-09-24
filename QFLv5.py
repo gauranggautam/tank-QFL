@@ -1,5 +1,4 @@
 from pyHegel.commands import * 
-
 import builtins
 from datetime import datetime
 from io import StringIO
@@ -638,7 +637,8 @@ def set_detection(state, home_first=False, apd_final_state=False, wlight_final_s
     configs = {
         "camera":  {"slot": 0,  "filter": "no",   "detector": "camera"},
         "apd":     {"slot": 10, "filter": "n405", "detector": "apd"},
-        "spectro": {"slot": 1,  "filter": "n405", "detector": "spectro"}
+        "spectro": {"slot": 1,  "filter": "n405", "detector": "spectro"},
+        "apd-435": {"slot": 5, "filter": "n405", "detector": "apd"}
     }
     
     if state not in configs:
@@ -682,15 +682,18 @@ def set_detection(state, home_first=False, apd_final_state=False, wlight_final_s
     print(f" White Light State  : {serial_status['White_Light']}")
     print("="*45 + "\n")
     
-    return {
-        "mode": state,
-        "wheel_slot": serial_status['Slot'],
-        "filter_axis_mm": filt_pos,
-        "detect_axis_mm": det_pos,
-        "apd_power": serial_status['APD_Power'],
-        "white_light": serial_status['White_Light']
-    }
 
+#def home_attocube(axis,amc=None):
+    #if amc is None:
+    #    amc = start_attocube()
+    #if axis is None:
+        #for ax in [0,1,2]:
+            #amc.control.setControlOutput(ax, True)
+            #amc.control.setControlMove(ax, True)
+            #amc.control.setControlAutoReset(ax)
+            #amc.control.searchReferencePosition(ax)
+            #amc.control.setCon
+    
 
 def start_attocube(amc_address='amc100num-a01-0248.local',showcmd=False):
     """
@@ -724,8 +727,9 @@ def start_attocube(amc_address='amc100num-a01-0248.local',showcmd=False):
         if amc:
             amc.close()
         return None
-def amc_disable():
-    amc= start_attocube()
+def amc_disable(amc=None):
+    if amc is None:
+        amc = start_attocube()
     for axis in [0, 1, 2]:
         #amc.control.setControlOutput(axis, False)
         amc.control.setControlMove(axis, False)
@@ -752,10 +756,13 @@ def close_device_all(sn=None, amc=None,showcmd=True, daq=None, t_ch1=None, t_ch2
                 print("DAQ closed.") 
         if camera:
             unload(camera)
+            print("iDus closed.")
         if spectro:
             unload(spectro)
+            print("Kymera closed.")
         if laser:
             unload(laser)
+            print("laser closed.")
     except:
         print("Nothing to close.")
         return None
@@ -777,12 +784,31 @@ def amc_move(amc=None, axis=None, d=None):
     if amc is None:
         amc = start_attocube()
     amc.move.setControlTargetPosition(axis, int(d * 1000));wait_until_stable(amc, axis)
-def amc_movexyz(x,y,f,amc=None):
-    if amc is None:
-        amc = start_attocube()
-    amc.move.setControlTargetPosition(0, int(x * 1000));wait_until_stable(amc, 0)
-    amc.move.setControlTargetPosition(1, int(f * 1000));wait_until_stable(amc, 1)
-    amc.move.setControlTargetPosition(2, int(y * 1000));wait_until_stable(amc, 2)      
+def amc_movexyz(x=None,y=None,f=None,amc=None,output=False):
+    try:
+        if amc is None:
+            amc = start_attocube()
+            if amc is None: raise ConnectionError("Failed to start Attocube.")
+            amc_local = True
+        x0,y0,f0 = getposall(amc=amc)
+        if x is not None:
+            amc.move.setControlTargetPosition(0, int(x * 1000));wait_until_stable(amc, 0)
+        if f is not None:
+            amc.move.setControlTargetPosition(1, int(f * 1000));wait_until_stable(amc, 1)
+        if y is not None: 
+            amc.move.setControlTargetPosition(2, int(y * 1000));wait_until_stable(amc, 2)
+        x,y,f = getposall(amc=amc) 
+        if output:
+            return x,y,f 
+    except Exception as e:
+        print(f"An error occurred during amc_move: {e}")
+        amc.move.setControlTargetPosition(0, int(x0 * 1000));wait_until_stable(amc, 0)
+        amc.move.setControlTargetPosition(1, int(f0 * 1000));wait_until_stable(amc, 1)
+        amc.move.setControlTargetPosition(2, int(y0 * 1000));wait_until_stable(amc, 2)
+        return x0,y0,f0 
+    finally:
+        if amc_local and amc: close_device_all(amc=amc,showcmd=False)
+        
 def output_dir_folder(base_dir=r'D:\Data_Python_PL'):
     """
     Creates a subdirectory named with the current date (YYYY_MM_DD)
@@ -823,7 +849,7 @@ def run_focus_sweep(fbase=None, fstep=0.1, fsize=30, movetobest=True, showplt=Tr
             if amc is None: raise ConnectionError("Failed to start Attocube.")
             amc_local = True
 
-        # Corrected the logical condition here
+
         if sn is None or d1 is None or d2 is None:
             sn, d1, d2 = start_apds(detector_config=detector_config)
             if sn is None: raise ConnectionError("Failed to start APDs.")
@@ -896,8 +922,6 @@ def run_focus_sweep(fbase=None, fstep=0.1, fsize=30, movetobest=True, showplt=Tr
         amc.move.setControlTargetPosition(1, int(fnow * 1000)); wait_until_stable(amc, axis=0)
         return fnow
     finally:
-        # --- Cleanup ---
-        # Close devices only if they were opened locally within this function.
         if sn_local and sn: close_device_all(sn=sn)
         if amc_local and amc: close_device_all(amc=amc)
 import os
@@ -1950,12 +1974,13 @@ def run_g2_from_file(input_file, detector_config=2, output_dir=r'C:/Users/iq-qfl
         # === Final Cleanup ===
         if sn:
             close_device_all(sn=sn)
-def getposall():
-    amc = start_attocube()
-    print(f"x = {amc.move.getPosition(0) / 1000}")
-    print(f"y = {amc.move.getPosition(2) / 1000}")
-    print(f"f = {amc.move.getPosition(1) / 1000}")  
-    close_device_all(amc=amc)
+def getposall(amc=None):
+    if amc is None:
+        amc = start_attocube()
+    x = amc.move.getPosition(0) / 1000
+    y = amc.move.getPosition(2) / 1000
+    f = amc.move.getPosition(1) / 1000
+    return x,y,f
 def wobble(size=2, speed=1, fbase=None):
     amc = start_attocube()
     # === CONFIG ===
@@ -2518,7 +2543,7 @@ def run_pl_polarization(start_deg=0, end_deg=360, step_deg=2,
         # === 5. Finalize and Save Plot ===
         plt.ioff() # Disable interactive mode
         if show_plot and len(actual_angles) > 0:
-            plot_file = os.path.join(out_dir, f'polarization_apd_plot_{timestamp}.png')
+            plot_file = os.path.join(out_dir, f'polarization_apd_plot{f"_{ide}" if ide is not None else ""}_{timestamp}.png')
             fig.savefig(plot_file)
             print(f"Summary plot saved to: {plot_file}")
             plt.show()
@@ -3592,7 +3617,7 @@ def cryo_waitforstable(cryo=None, poll_interval=2):
     print(f"Waiting for platform temperature to stabalize...")
     while True:
         current_temp = cryo_get_temp_p1(cryo)
-        if cryo.get_system_state() == 'StableAtTarget':
+        if cryo.get_system_state() == 'StableAtTarget' :
             print(f"Platform reached stability temperature: {current_temp:.2f} K")
             break
         time.sleep(poll_interval)
@@ -3667,12 +3692,6 @@ def cryo_waitforvent(vent_pressure_threshold=700, cryo=None, timeout_s=600, poll
     print("\nWARNING: Timeout reached waiting for vent.")
     return False
 
-# === FIX FOR FORTRAN/MKL CTRL+C CRASH ===
-import sys
-import os
-import time
-import numpy as np
-import matplotlib.pyplot as plt
 
 # === FIX FOR FORTRAN/MKL CTRL+C CRASH ===
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
@@ -3681,261 +3700,204 @@ os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
 from thorlabs_tsi_sdk.tl_camera_enums import OPERATION_MODE
 
-def get_peak_intensity(image_array):
-    """
-    Collapses 3D arrays to 2D grayscale and finds the absolute brightest pixel.
-    """
-    if image_array.ndim == 3:
-        gray_img = np.mean(image_array, axis=2)
-    else:
-        gray_img = image_array
-        
-    max_val = float(np.max(gray_img))
-    max_coords = np.unravel_index(np.argmax(gray_img), gray_img.shape)
-    
-    return max_val, max_coords, gray_img
-
+def get_peak_intensity_fast(image_array):
+    """Checks the absolute single-pixel maximum on the raw grayscale array."""
+    max_val = float(np.max(image_array))
+    max_coords = np.unravel_index(np.argmax(image_array), image_array.shape)
+    return max_val, max_coords
 
 def run_camera_focus_sweep(center_f=None, f_size=50, step=0.1,
-                           camera_serial="11484", ide=None, exposure_ms=10, 
-                           out_dir_base=r'D:\Data_Python_PL\Camera',
-                           move_to_best=True, post_sweep_live_feed=True,
-                           amc=None):
-    amc_local = False
-    data_file_handle = None
-    best_f = None
-    aborted = False
-    exposure_us = int(float(exposure_ms) * 1000) 
+                           camera_serial="11484", ide=None, exposure_ms=200, 
+                           out_dir=r'D:\Data_Python_PL\Camera',
+                           move_to_best=True, amc=None):
     
-    plot_file = None
-    last_known_shape = (1024, 1024) 
+    if amc is None:
+        try:
+            amc = start_attocube()
+            amc_local = True
+        except NameError:
+            pass
+
+    exposure_us = int(float(exposure_ms) * 1000) 
+    aborted = False
+    data_file_handle = None
     points_collected = 0
     
+    # Trackers for dropped frames
+    last_valid_intensity = 0.0
+    last_valid_image = np.zeros((1080, 1440), dtype=np.uint16)
+    last_coords = (0, 0)
+    
+    # 1. Establish Initial Positions
+    fnow = center_f if center_f is not None else float(amc.move.getPosition(1)) / 1000.0
+    best_f = fnow
+    max_int = -1
+
+    # 2. Setup Output Files
+    os.makedirs(out_dir, exist_ok=True)
+    timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+    plot_file = os.path.join(out_dir, f'cam_focus_plot_{timestamp}.png')
+    data_file = os.path.join(out_dir, f'cam_focus_data_{timestamp}.txt')
+
+    data_file_handle = open(data_file, 'w')
+    data_file_handle.write(f'# Camera Focus Sweep - {timestamp}\n# Initial Center F: {fnow:.3f}\n')
+    data_file_handle.write('# f_req\tf_act\tintensity\tmax_y\tmax_x\n')
+
+    # 3. Setup High-Speed GUI
+    plt.ion()
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    f_start, f_end = fnow - (f_size / 2), fnow + (f_size / 2)
+    f_pos = np.arange(f_start, f_end + step, step)
+    
+    # Initialize with all zeros
+    intensity_data = np.zeros(len(f_pos), dtype=float)
+    
+    line1, = ax1.plot(f_pos, intensity_data, 'b-o', markersize=4)
+    ax1.set_xlabel('Z Position (µm)')
+    ax1.set_ylabel('Peak Intensity')
+    ax1.grid(True, linestyle='--', alpha=0.7)
+    
+    # cmap='inferno' provides the color mapping for the live view
+    img_display = ax2.imshow(last_valid_image, cmap='inferno', vmin=0, vmax=65535)
+    ax2.axis('off')
+    fig.tight_layout()
+
     try:
-        # === 1. Start AMC ===
-        if amc is None:
-            amc = start_attocube()
-            if amc is None: raise ConnectionError("Failed to start Attocube.")
-            amc_local = True
-
-        # Capture the initial position before doing anything
-        fnow = center_f if center_f is not None else float(amc.move.getPosition(1)) / 1000.0
-        center_f = fnow
-        best_f = center_f  
-
-        # Setup Output Directories
-        out_dir = output_dir_folder(base_dir=out_dir_base)
-
-        # Setup Real-time Plotting
-        plt.ion()
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-        
-        f_start, f_end = center_f - (f_size / 2), center_f + (f_size / 2)
-        f_pos = np.arange(f_start, f_end + step, step)
-        intensity_data = np.zeros(len(f_pos), dtype=float)
-        
-        line1, = ax1.plot(f_pos, intensity_data, 'b-o', markersize=4)
-        ax1.set_xlabel('F / Z (µm)')
-        ax1.set_ylabel('Max Single-Pixel Intensity')
-        ax1.set_title('Focus Sweep Curve')
-        ax1.grid(True, linestyle='--', alpha=0.7)
-        
-        img_display = None
-        ax2.set_title('Live Camera Feed')
-        ax2.axis('off')
-        fig.tight_layout()
-
-        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
-        plot_file = os.path.join(out_dir, f'cam_focus_plot{f"_{ide}" if ide is not None else ""}_{timestamp}.png')
-        data_file = os.path.join(out_dir, f'cam_focus_data{f"_{ide}" if ide is not None else ""}_{timestamp}.txt')
-
-        data_file_handle = open(data_file, 'w')
-        data_file_handle.write(f'# Camera Focus Sweep - {timestamp}\n# Initial Center F: {center_f:.3f}\n')
-        data_file_handle.write('# f_req\tf_act\tintensity\tmax_x\tmax_y\n')
-
-        # === 2. Start Camera ===
         with TLCameraSDK() as sdk:
-            available_cameras = sdk.discover_available_cameras()
-            if not available_cameras: raise ConnectionError("No Thorlabs cameras found!")
-            
-            target_serial = next((cam for cam in available_cameras if camera_serial in cam), available_cameras[0])
+            cameras = sdk.discover_available_cameras()
+            target_serial = next((cam for cam in cameras if camera_serial in cam), cameras[0])
             
             with sdk.open_camera(target_serial) as camera:
                 camera.operation_mode = OPERATION_MODE.SOFTWARE_TRIGGERED
                 camera.exposure_time_us = exposure_us
                 camera.frames_per_trigger_zero_for_unlimited = 1
-
-                # === 3. THE DUMMY FRAME FIX ===
-                print("\nClearing stale hardware buffers...")
-                camera.arm(frames_to_buffer=1)
+                
+                # Clear stale hardware buffer
+                camera.arm(1)
                 camera.issue_software_trigger()
-                time.sleep(0.2)
-                _ = camera.get_pending_frame_or_null() 
-                camera.disarm()
                 time.sleep(0.1)
-
-                max_int = -1
-                total_points = len(f_pos)
+                _ = camera.get_pending_frame_or_null()
+                camera.disarm()
 
                 print(f"--- Starting Sweep ({f_start:.2f} µm to {f_end:.2f} µm) ---")
 
-                # === SWEEP LOOP ===
-                for i, y in enumerate(f_pos):
+                for i, target_z in enumerate(f_pos):
                     if not plt.fignum_exists(fig.number):
-                        print("\nPlot window closed. Aborting sweep early...")
+                        print("\nPlot closed by user. Aborting!")
                         aborted = True
                         break
 
-                    amc.move.setControlTargetPosition(1, int(float(y) * 1000))
-                    wait_until_stable(amc, axis=1) 
+                    # Move Stage
+                    amc.move.setControlTargetPosition(1, int(float(target_z) * 1000))
+                    time.sleep(0.1) 
                     
                     f_act = float(amc.move.getPosition(1)) / 1000.0
-                    
-                    camera.arm(frames_to_buffer=1)
+
+                    # Capture Frame
+                    camera.arm(1)
                     camera.issue_software_trigger()
-                    time.sleep(0.5) 
                     
                     frame = None
                     attempts = 0
-                    while frame is None and attempts < 10:
-                        time.sleep(0.1) 
+                    while frame is None and attempts < 20: 
+                        time.sleep(0.02)
                         frame = camera.get_pending_frame_or_null()
                         attempts += 1
-                    
-                    if frame is None:
-                        print(f"Warning: Frame missing at Z={f_act:.2f} µm")
-                        process_img = np.zeros(last_known_shape) 
-                        intensity, coords = 0, (0, 0)
-                    else:
-                        imagem = np.asarray(frame.image_buffer)
-                        intensity, coords, process_img = get_peak_intensity(imagem)
-                        last_known_shape = process_img.shape
-                    
+                        
                     camera.disarm()
+                        
+                    # Handle Frame Data (Fallback to last valid if dropped)
+                    if frame is not None:
+                        image_array = np.asarray(frame.image_buffer)
+                        intensity, coords = get_peak_intensity_fast(image_array)
+                        
+                        # Cache for future dropped frames
+                        last_valid_intensity = intensity
+                        last_valid_image = image_array
+                        last_coords = coords
+                    else:
+                        print(f"\nWarning: Frame dropped at Z={f_act:.2f}. Reusing last value.")
+                        intensity = last_valid_intensity
+                        image_array = last_valid_image
+                        coords = last_coords
 
+                    max_y, max_x = coords
                     intensity_data[i] = intensity
+                    
                     if intensity > max_int:
                         max_int, best_f = intensity, f_act
 
-                    max_y, max_x = coords
-                    data_file_handle.write(f'{y:.3f}\t{f_act:.3f}\t{intensity:.2f}\t{max_x}\t{max_y}\n')
+                    # Write Data
+                    data_file_handle.write(f'{target_z:.3f}\t{f_act:.3f}\t{intensity:.2f}\t{max_y}\t{max_x}\n')
                     data_file_handle.flush()
-
                     points_collected += 1
-                    print(f'Scan: {points_collected}/{total_points} | Z: {f_act:.2f} | Peak: {intensity:.0f} at X:{max_x}, Y:{max_y}   ', end='\r')
 
+                    # --- PURE MATPLOTLIB UPDATE BLOCK ---
                     line1.set_ydata(intensity_data)
                     ax1.relim()
                     ax1.autoscale_view()
-                    ax1.set_title(f'Focus Sweep – Max: {max_int:.0f} @({best_f:.2f} µm)')
                     
-                    if img_display is None:
-                        img_display = ax2.imshow(process_img, cmap='gray' if process_img.ndim == 2 else None, vmin=0)
-                    else:
-                        img_display.set_data(process_img)
-                        if process_img.ndim == 2:
-                            vmax_val = max(10, process_img.max()) 
-                            img_display.set_clim(vmin=0, vmax=vmax_val)
+                    # Update image data; cmap handles the coloring automatically
+                    img_display.set_data(image_array)
+                    
+                    vmax_val = int(intensity) if intensity > 10 else 10
+                    img_display.set_clim(vmin=0, vmax=vmax_val)
+                    ax1.set_title(f'Max: {max_int:.0f} @ {best_f:.2f} µm')
+                    
+                    # Force GUI update
+                    plt.pause(0.01)
+                    # ------------------------------------
                         
-                    fig.canvas.draw()
-                    fig.canvas.flush_events()
+                    print(f'Scan: {i+1}/{len(f_pos)} | Z: {f_act:.2f} | Peak: {intensity:.0f}', end='\r')
 
-                if not aborted:
-                    print("\n\nScan complete.")
-                
-                # === LIVE FEED ===
-                if post_sweep_live_feed and not aborted:
-                    target_f = best_f if move_to_best else center_f
-                    print(f"\n[LIVE FEED PENDING] Will park stage at {target_f:.2f} µm...")
-                    amc.move.setControlTargetPosition(1, int(float(target_f) * 1000))
-                    wait_until_stable(amc, axis=1)
-                    
-                    print(f"\n[LIVE FEED ACTIVE] >>> PRESS 'CTRL+C' OR CLOSE THE PLOT WINDOW TO EXIT <<<")
-                    ax1.set_title(f'Sweep Finished – Parked at {target_f:.2f} µm')
-                    fig.canvas.draw()
-                    
-                    try:
-                        while plt.fignum_exists(fig.number):
-                            camera.arm(frames_to_buffer=1)
-                            camera.issue_software_trigger()
-                            
-                            frame = None
-                            attempts = 0
-                            while frame is None and attempts < 10:
-                                time.sleep(0.05)
-                                frame = camera.get_pending_frame_or_null()
-                                attempts += 1
-                            
-                            if frame is not None:
-                                imagem = np.asarray(frame.image_buffer)
-                                intensity, coords, process_img = get_peak_intensity(imagem)
-                                
-                                img_display.set_data(process_img)
-                                if process_img.ndim == 2:
-                                    vmax_val = max(10, process_img.max())
-                                    img_display.set_clim(vmin=0, vmax=vmax_val)
-                                ax2.set_title(f'Live Camera | Peak: {intensity:.0f}')
-                                
-                                fig.canvas.draw()
-                                fig.canvas.flush_events()
-                                
-                            camera.disarm()
-                    except KeyboardInterrupt:
-                        print("\nKeyboard Interrupt received. Closing live feed...")
-                        aborted = True
+        print("\nSweep Complete.")
 
-    except Exception as e:
-        print(f"\nA critical error occurred: {e}")
-        aborted = True
     except KeyboardInterrupt:
-        print("\nKeyboard Interrupt received during sweep.")
+        print("\nSweep interrupted by user.")
         aborted = True
-    
+    except Exception as e:
+        print("\n--- CRITICAL ERROR TRACEBACK ---")
+        traceback.print_exc()
+        print("--------------------------------")
+        aborted = True
     finally:
-        print("\n--- Cleaning up resources ---")
         plt.ioff()
-        
-        # === 4. SAFE HARDWARE PARKING ===
-        if amc is not None and center_f is not None:
-            # If aborted, ignore best_f and force return to the initial starting point
-            if aborted:
-                target_f = center_f
-                print(f"Scan aborted. Returning stage to initial position: {target_f:.2f} µm...")
-            else:
-                target_f = best_f if move_to_best else center_f
-                print(f"Parking stage at target focus position: {target_f:.2f} µm...")
-                
-            try:
-                amc.move.setControlTargetPosition(1, int(float(target_f) * 1000))
-                time.sleep(0.5) 
-                
-                if 'ax1' in locals() and 'fig' in locals() and plt.fignum_exists(fig.number):
-                    status_text = "Aborted" if aborted else "Ended"
-                    ax1.set_title(f'Sweep {status_text} – Parked at {target_f:.2f} µm')
-                    fig.canvas.draw()
-            except Exception as e:
-                print(f"Warning: Could not park stage during cleanup: {e}")
-
-        # Save plot if we collected data
-        if plot_file and points_collected > 0:
-            try:
-                plt.savefig(plot_file)
-                print(f"Plot saved to: {plot_file}")
-            except Exception as e: 
-                print(f"Warning: Failed to save plot: {e}")
+        if data_file_handle:
+            data_file_handle.close()
             
-        plt.close('all') 
-        if data_file_handle: data_file_handle.close()
-        if amc_local and amc:
-            try: amc.close() 
-            except AttributeError: pass
-
+        if amc is not None:
+            park_pos = fnow if aborted else (best_f if move_to_best else fnow)
+            print(f"Parking stage at {park_pos:.2f} µm...")
+            try:
+                amc.move.setControlTargetPosition(1, int(float(park_pos) * 1000))
+            except Exception as e:
+                print(f"Failed to park stage: {e}")
+            if amc_local and amc:
+                try:
+                    close_device_all(amc=amc)
+                except Exception:
+                    pass
+                
+        if points_collected > 0 and plt.fignum_exists(fig.number):
+            plt.savefig(plot_file)
+            print(f"Data saved to: {out_dir}")
+            
+        plt.show()
 
 def run_live_camera(camera_serial="11484", exposure_ms=10):
     exposure_us = int(float(exposure_ms) * 1000)
+    
     plt.ion()
     fig, ax = plt.subplots(figsize=(8, 6))
-    img_display = None
+    
+    # 1. Pre-allocate display memory with a dummy 2D array
+    # Using 'inferno' provides the false-color view for the laser spot
+    dummy_img = np.zeros((1080, 1440), dtype=np.uint16)
+    img_display = ax.imshow(dummy_img, cmap='inferno', vmin=0, vmax=65535)
+    ax.set_title("Live Camera Feed")
+    ax.axis('off')
+    fig.tight_layout()
     
     try:
         with TLCameraSDK() as sdk:
@@ -3950,50 +3912,61 @@ def run_live_camera(camera_serial="11484", exposure_ms=10):
                 camera.exposure_time_us = exposure_us
                 camera.frames_per_trigger_zero_for_unlimited = 1
                 
+                # Clear stale hardware buffer
+                camera.arm(1)
+                camera.issue_software_trigger()
+                time.sleep(0.1)
+                _ = camera.get_pending_frame_or_null()
+                camera.disarm()
+                
                 print(f"\n[LIVE FEED ACTIVE] Using camera: {target_serial}")
-                print(">>> PRESS 'CTRL+C' OR CLOSE WINDOW TO EXIT <<<")
+                print(">>> CLOSE THE PLOT WINDOW OR PRESS 'CTRL+C' TO EXIT <<<")
                 
                 while plt.fignum_exists(fig.number):
-                    camera.arm(frames_to_buffer=1)
+                    camera.arm(1)
                     camera.issue_software_trigger()
                     
                     frame = None
                     attempts = 0
-                    while frame is None and attempts < 10:
-                        time.sleep(0.05)
+                    
+                    # BYPASS HIJACKED MAX()
+                    sleep_time = exposure_ms / 1000.0 / 5.0
+                    actual_sleep = sleep_time if sleep_time > 0.01 else 0.01
+                    
+                    while frame is None and attempts < 20:
+                        time.sleep(actual_sleep) 
                         frame = camera.get_pending_frame_or_null()
                         attempts += 1
                         
-                    if frame is not None:
-                        img_buf = np.asarray(frame.image_buffer)
-                        
-                        # Handle color processing
-                        img_rgb = img_buf
-                        if img_buf.ndim == 2:
-                            try:
-                                import cv2
-                                if hasattr(camera, 'color_filter_array') and camera.color_filter_array != 0:
-                                    bayer_cvt = getattr(cv2, 'COLOR_BayerRG2RGB', cv2.COLOR_BayerBG2RGB)
-                                    img_rgb = cv2.cvtColor(img_buf, bayer_cvt)
-                                else:
-                                    img_rgb = cv2.cvtColor(img_buf, cv2.COLOR_GRAY2RGB)
-                            except ImportError:
-                                img_rgb = img_buf 
-                        
-                        if img_display is None:
-                            img_display = ax.imshow(img_rgb, cmap='gray' if img_rgb.ndim == 2 else None)
-                            ax.set_title("Live Camera Feed")
-                            ax.axis('off')
-                        else:
-                            img_display.set_data(img_rgb)
-                            
-                        fig.canvas.draw()
-                        fig.canvas.flush_events()
-                        
                     camera.disarm()
                     
+                    if frame is not None:
+                        # Extract the raw 2D grayscale array
+                        image_array = np.asarray(frame.image_buffer)
+                        
+                        # Find the peak intensity
+                        peak_val = float(np.max(image_array))
+                        
+                        # 2. Update display data in memory (Fast)
+                        img_display.set_data(image_array)
+                        
+                        # 3. Safe integer cast for Matplotlib limits
+                        vmax_val = int(peak_val) if peak_val > 10 else 10
+                        img_display.set_clim(vmin=0, vmax=vmax_val)
+                        
+                        ax.set_title(f"Live Camera Feed | Peak: {peak_val:.0f}")
+                        
+                        # 4. Pure Matplotlib safe refresh
+                        plt.pause(0.01)
+                        
     except KeyboardInterrupt:
         print("\nLive feed stopped by user.")
+    except Exception as e:
+        import traceback
+        print("\n--- CRITICAL ERROR TRACEBACK ---")
+        traceback.print_exc()
+        print("--------------------------------")
     finally:
         plt.ioff()
         plt.close('all')
+        print("Camera disconnected and plot closed.")

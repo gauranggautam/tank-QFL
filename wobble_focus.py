@@ -3,7 +3,7 @@ amc = start_attocube()
 # === CONFIG ===
 wobble_speed = 2
 delay=0.001# 
-wobble_size = 4          # ± range from current focus
+wobble_size = 6          # ± range from current focus
 # === AMC Init ===
 
 f_now = amc.move.getPosition(1) / 1000
