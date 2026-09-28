@@ -1,5 +1,5 @@
 #%%
-data_dir = r"\\dphy-bob\Recherche\Salles Propres\GGautam\Samples\ChBN\ChBN12_LT\Data\Spectrum\data-nor" 
+data_dir = r"C:\Users\gauta\OneDrive - USherbrooke\Samples\ChBN12-LowTemp\Data complete\Data Sorted\Data-LTRT\E3" 
 import os
 import glob
 import re
@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import medfilt
 from scipy.optimize import curve_fit
+from matplotlib.colors import LogNorm # Add this import
 
 # ==========================================
 # 1. Configuration, Loading & Cleaning

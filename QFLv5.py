@@ -1,4 +1,6 @@
-from pyHegel.commands import * 
+# =============================================================================
+# Standard Library Imports
+# =============================================================================
 import builtins
 from datetime import datetime
 from io import StringIO
@@ -7,7 +9,9 @@ import re
 import time
 import traceback
 
-# Third-party libraries
+# =============================================================================
+# Third-Party Libraries
+# =============================================================================
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -15,121 +19,59 @@ from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 from matplotlib.widgets import Button
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
+from pyHegel.commands import * 
 import pyvisa
+import serial
 
-# Matplotlib configuration
-plt.style.use('dark_background')
-TAB20_COLORS = plt.colormaps['tab20'].colors
-
-# Hardware-Specific Imports & Flags
-uhd_plots = False
-
+# =============================================================================
+# Hardware-Specific Libraries
+# =============================================================================
+# Attocube
 try:
     from attocube import AMC
 except ImportError as e:
-    print(e)
+    print(f"Attocube Import Error: {e}")
 
+# Montana
 try:
-    from snAPI.Main import *
+    from montana import cryocore
 except ImportError as e:
-    print(e)
+    print(f"Montana Import Error: {e}")
 
-# try: from taiko_driver import TaikoLaser, PicoQuantException
-# except ImportError as e: print(e)
-
+# NIDAQmx
 try:
     import nidaqmx
     from nidaqmx.constants import Edge
 except ImportError as e:
-    print(e)
+    print(f"NIDAQmx Import Error: {e}")
 
+# snAPI
 try:
-    import labview_buttons_v2 as lv
+    from snAPI.Main import *
 except ImportError as e:
-    print(e)
+    print(f"snAPI Import Error: {e}")
 
-try:
+# Thorlabs
+try: 
     from pylablib.devices import Thorlabs
+except ImportError as e: 
+    print(f"Thorlabs (pylablib) Import Error: {e}")
+
+try: 
+    from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
+    from thorlabs_tsi_sdk.tl_camera_enums import OPERATION_MODE
 except ImportError as e:
-    print(e)
+    print(f"Thorlabs TSI SDK Import Error: {e}")
 
-try:
-    from montana import cryocore
-except ImportError as e:
-    print(e)
-
-
-
-
-import os, re, time, traceback, builtins
-from datetime import datetime
-from io import StringIO
-# Third-party
-import numpy as np
-import matplotlib as mpl
-import matplotlib.pyplot as plt
+# =============================================================================
+# Global Configurations & Flags
+# =============================================================================
+# Matplotlib configuration
 plt.style.use('dark_background')
-import matplotlib.ticker as mticker
-from matplotlib.ticker import MaxNLocator, AutoMinorLocator
-from matplotlib.widgets import Button
-from mpl_toolkits.mplot3d import Axes3D
-import pyvisa
-
 TAB20_COLORS = plt.colormaps['tab20'].colors
-# Hardware-Specific Imports
+
+# Flags
 uhd_plots = False
-#from andor import *
-try: from attocube import AMC
-except ImportError as e: print(e)
-
-try: from snAPI.Main import *
-except ImportError as e: print(e)
-
-#try: from taiko_driver import TaikoLaser, PicoQuantException
-#except ImportError as e: print(e)
-
-try: import nidaqmx; from nidaqmx.constants import Edge
-except ImportError as e: print(e)
-
-try: import labview_buttons_v2 as lv
-except ImportError as e: print(e)
-
-try: from pylablib.devices import Thorlabs
-except ImportError as e: print(e)
-
-try: from montana import cryocore
-except ImportError as e: print(e)
-
-
-import os, re, time, traceback, builtins
-from datetime import datetime
-from io import StringIO
-
-# Third-party
-import numpy as np
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-from matplotlib.ticker import MaxNLocator, AutoMinorLocator
-from matplotlib.widgets import Button
-from mpl_toolkits.mplot3d import Axes3D
-import pyvisa
-
-TAB20_COLORS = plt.colormaps['tab20'].colors
-# Hardware-Specific Imports
-uhd_plots = False
-
-try: from attocube import AMC
-except ImportError as e: print(e)
-
-try: from snAPI.Main import *
-except ImportError as e: print(e)
-
-#try: from taiko_driver import TaikoLaser, PicoQuantException
-#except ImportError as e: print(e)
-
-try: import nidaqmx; from nidaqmx.constants import Edge
-except ImportError as e: print(e)
 
 
 def set_4k():
@@ -148,19 +90,19 @@ def set_4k():
     uhd_plots = True
     # 20-category tab20 color palette using updated Matplotlib API
 def set_size_poster(size=45):
-        sz=size
-        sz_small = sz - 10
-        plt.rcParams['font.family'] = 'Times New Roman'
-        plt.rcParams['font.size'] = sz_small
-        plt.rcParams['font.weight'] = 'bold'
-        plt.rcParams['axes.labelweight'] = 'bold'
-        plt.rcParams['axes.titlesize'] = sz
-        plt.rcParams['axes.titleweight'] = 'bold'
-        plt.rcParams['axes.labelsize'] = sz_small
-        plt.rcParams['legend.fontsize'] = sz_small-10
-        plt.rcParams['xtick.labelsize'] = sz_small
-        plt.rcParams['ytick.labelsize'] = sz_small
-        poster = True   
+    sz=size
+    sz_small = sz - 10
+    plt.rcParams['font.family'] = 'Times New Roman'
+    plt.rcParams['font.size'] = sz_small
+    plt.rcParams['font.weight'] = 'bold'
+    plt.rcParams['axes.labelweight'] = 'bold'
+    plt.rcParams['axes.titlesize'] = sz
+    plt.rcParams['axes.titleweight'] = 'bold'
+    plt.rcParams['axes.labelsize'] = sz_small
+    plt.rcParams['legend.fontsize'] = sz_small-10
+    plt.rcParams['xtick.labelsize'] = sz_small
+    plt.rcParams['ytick.labelsize'] = sz_small
+    poster = True   
 def add_stop_button(fig, running_flag):
     """
     Adds a 'Stop' button to a matplotlib figure.
@@ -183,10 +125,7 @@ def add_stop_button(fig, running_flag):
     stop_button.on_clicked(stop_loop)
     # Return the button so it's not garbage-collected
     return stop_button
-# Hardware control functions
 
-
-# Assuming instruments, set, and get are imported/defined in your environment
 
 def set_laser(power=None, pulsed=False, laser=None, freq_khz=10000, softlock=False, engaged=True):
     """
@@ -289,9 +228,6 @@ def set_laser_softlock(laser=None, engaged=True):
     set(laser.softlock_en, True)
     close_device_all(laser=laser)
 
-
-import time
-import matplotlib.pyplot as plt
 
 def start_apds(detector_config=2, trpl=False, read_counts=True, graph_counts=False):
     """
@@ -495,9 +431,7 @@ def start_daq(device='Dev1',ch1='PFI8', ch2='PFI9',read_counts=False, graph_coun
     return daq, t_ch1, t_ch2 
 
 
-import serial
-import time
-import pyvisa
+
 
 # ==========================================
 # 1. Serial Device (Filter Wheel & Lights)
@@ -924,11 +858,7 @@ def run_focus_sweep(fbase=None, fstep=0.1, fsize=30, movetobest=True, showplt=Tr
     finally:
         if sn_local and sn: close_device_all(sn=sn)
         if amc_local and amc: close_device_all(amc=amc)
-import os
-import time
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
+
 
 def run_pl_scan(center_x=None, center_y=None, center_f=None,
                 focus_sweep=False, f_size=50,
@@ -2005,6 +1935,7 @@ def wobble(size=2, speed=1, fbase=None):
                 wait_until_stable(amc_dev=amc, axis=1)
     except KeyboardInterrupt:
         amc.move.setControlTargetPosition(1, int(f_now * 1000))
+
         close_device_all(amc=amc)
 def gohome(amc=None):
     if amc is None:
@@ -2352,10 +2283,6 @@ def run_spectrum_focus_sweep(camera, spectro, fbase=None, fstep=0.1, fsize=30, m
 
 #set_spectrum(camera=camera, spectro=spectro, wl=484, grating=1) for default 420 to 547
 #set_spectrum(camera=camera, spectro=spectro, wl=461, grating=2) for HR 430 to 490
-try: 
-    from pylablib.devices import Thorlabs
-except ImportError as e: 
-    print(e)
 
 # --- Thorlabs KDC Controller Functions ---
 
@@ -3697,8 +3624,7 @@ def cryo_waitforvent(vent_pressure_threshold=700, cryo=None, timeout_s=600, poll
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
 # Assuming the SDK is in your active environment or working directory
-from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
-from thorlabs_tsi_sdk.tl_camera_enums import OPERATION_MODE
+
 
 def get_peak_intensity_fast(image_array):
     """Checks the absolute single-pixel maximum on the raw grayscale array."""
@@ -3962,7 +3888,6 @@ def run_live_camera(camera_serial="11484", exposure_ms=10):
     except KeyboardInterrupt:
         print("\nLive feed stopped by user.")
     except Exception as e:
-        import traceback
         print("\n--- CRITICAL ERROR TRACEBACK ---")
         traceback.print_exc()
         print("--------------------------------")

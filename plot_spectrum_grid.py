@@ -8,55 +8,72 @@ import matplotlib.pyplot as plt
 from scipy.signal import medfilt
 
 # --- Loading Logic ---
-data_dir = r"\\dphy-bob\Recherche\Salles Propres\GGautam\Samples\ChBN\ChBN12_LT\Data\Spectrum\data"  
+data_dir = r"C:\Users\gauta\OneDrive - USherbrooke\Samples\ChBN12-LowTemp\Data complete\Data Sorted\Data-E1-E10-5K\Spectrum-E1-E10"  
 file_pattern = os.path.join(data_dir, 'spectrum_data_*.txt')
 data_dict = {}
-temp_regex = re.compile(r'spectrum_data_\d+_(\d+)_')
+
+# Regex to capture anything between 'spectrum_data_' and '.txt'
+label_regex = re.compile(r'spectrum_data_(.*?)\.txt')
 
 for filepath in glob.glob(file_pattern):
-    match = temp_regex.search(os.path.basename(filepath))
+    filename = os.path.basename(filepath)
+    match = label_regex.search(filename)
     if match:
-        data = np.loadtxt(filepath, comments='#')
-        data_dict[float(match.group(1))] = (data[:, 0], data[:, 1])
+        label = match.group(1) 
+        
+        try:
+            data = np.loadtxt(filepath, comments='#')
+            if data.size > 0:
+                data_dict[label] = (data[:, 0], data[:, 1])
+        except Exception as e:
+            print(f"Skipping {filename} due to read error: {e}")
 
-temperatures = sorted(data_dict.keys())
-n_files = len(temperatures)
+# Helper for "natural sorting" (e.g., '2' comes before '10')
+def natural_keys(text):
+    return [float(c) if c.replace('.', '', 1).isdigit() else c.lower() for c in re.split(r'(\d+(?:\.\d+)?)', text)]
 
-# --- Determine Grid Size (e.g., 5x6) ---
-cols = 6
-rows = math.ceil(n_files / cols)
+labels = sorted(data_dict.keys(), key=natural_keys)
+n_files = len(labels)
 
-fig, axes = plt.subplots(rows, cols, figsize=(20, 3 * rows), sharex=True)
-# Flatten axes for easy iteration, even if it's a 2D array
-axes = axes.flatten()
+if n_files == 0:
+    print("No valid data files found.")
+else:
+    # --- Determine Grid Size (Strictly 2 Rows) ---
+    rows = 2
+    cols = max(1, math.ceil(n_files / rows))
 
-# Reusing the safe cleaning function from above
-def safe_remove_cosmic_rays(wl, counts):
-    filtered = medfilt(counts, kernel_size=5)
-    diff = np.abs(counts - filtered)
-    bg_mask = (wl < 434.0) | (wl > 438.0)
-    spike_mask = (diff > 5 * np.std(diff[bg_mask])) & bg_mask
-    clean_counts = np.copy(counts)
-    clean_counts[spike_mask] = filtered[spike_mask]
-    return clean_counts
-
-for i, t in enumerate(temperatures):
-    wl, counts = data_dict[t]
-    clean_counts = safe_remove_cosmic_rays(wl, counts)
+    # Dynamically scale the figure size. 
+    # Made slightly wider (5 inches per col) since x-axes are now independent and need space for labels.
+    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
     
-    ax = axes[i]
-    ax.plot(wl, clean_counts, color='royalblue', lw=1.2)
-    
-    # Put the temperature as a legend inside each subplot
-    ax.legend([f'{t} K'], loc='upper right', handlelength=0)
-    ax.grid(True, linestyle='--', alpha=0.5)
+    # Flatten ensures we can loop through it as a 1D list, regardless of grid shape
+    axes = np.atleast_1d(axes).flatten()
 
-# Turn off any unused subplots (if n_files isn't a perfect multiple of cols)
-for j in range(i + 1, len(axes)):
-    fig.delaxes(axes[j])
+    def safe_remove_cosmic_rays(wl, counts):
+        filtered = medfilt(counts, kernel_size=5)
+        diff = np.abs(counts - filtered)
+        bg_mask = (wl < 434.0) | (wl > 438.0)
+        spike_mask = (diff > 5 * np.std(diff[bg_mask])) & bg_mask
+        clean_counts = np.copy(counts)
+        clean_counts[spike_mask] = filtered[spike_mask]
+        return clean_counts
 
-fig.supxlabel('Wavelength (nm)', fontsize=14)
-fig.supylabel('Counts', fontsize=14)
-plt.tight_layout()
-plt.show()
+    for i, label in enumerate(labels):
+        wl, counts = data_dict[label]
+        clean_counts = safe_remove_cosmic_rays(wl, counts)
+        
+        ax = axes[i]
+        ax.plot(wl, clean_counts, color='royalblue', lw=1.2)
+        
+        ax.set_title(label, fontsize=12, fontweight='bold')
+        ax.grid(True, linestyle='--', alpha=0.5)
+
+    # Turn off any empty subplots in the grid (e.g. if you have an odd number of files)
+    for j in range(n_files, len(axes)):
+        fig.delaxes(axes[j])
+
+    fig.supxlabel('Wavelength (nm)', fontsize=14)
+    fig.supylabel('Counts', fontsize=14)
+    plt.tight_layout()
+    plt.show()
 # %%
