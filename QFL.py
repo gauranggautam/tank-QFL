@@ -1148,6 +1148,9 @@ def run_edge_sweep(center_x=None, center_f=None, f_size=5,
         if amc_local and amc: close_device_all(amc=amc)
 
     return best_x, best_y, center_f
+
+
+
 def run_pl_scan_daq(center_x=0, center_y=0, center_f=None,
                 focus_sweep=False, f_size=50,
                 x_size=5, y_size=5, step=1,t_acq=0.1,
@@ -2038,6 +2041,318 @@ def take_spectrum(bg=True, vbg=None,
         return v[1]
     else:
         return v
+
+import os
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+
+def run_apd_power_sweep(laser=None, sn=None, d1=None, d2=None, 
+                        power_start=0.0, power_stop=10.0, power_step=1.0,
+                        detector_config=2, logy=False, show_plot=True, engaged=False,
+                        out_dir_base=r'D:\Data_Python_PL\PowerSweeps'):
+    """
+    Performs a CW laser power sweep while recording APD count rates.
+    Includes a critical safety cutoff: if total counts exceed 2,000,000,
+    the laser power is immediately dropped and the sweep is aborted to protect the APDs.
+    Plots the total APD counts vs laser power in real time.
+    """
+    laser_local = False
+    sn_local = False
+    data_file_handle = None
+    
+    try:
+        # === Initialize Laser ===
+        if laser is None:
+            try:
+                laser = instruments.picoQuant.PicoQuant_Taiko_PDL_M1()
+                if laser is None: raise ConnectionError("Failed to start Taiko Laser.")
+                laser_local = True
+            except Exception as e:
+                raise ConnectionError(f"Failed to connect to laser: {e}")
+
+        # === Initialize APDs ===
+        if sn is None or d1 is None or d2 is None:
+            sn, d1, d2 = start_apds(detector_config=detector_config)
+            if sn is None: raise ConnectionError("Failed to start APDs.")
+            sn_local = True
+
+        if engaged:
+            laser_local = False
+            sn_local = False
+
+        # === Configure Laser (Softlock False, CW Mode) ===
+        set(laser.softlock_en, False)
+        print("Setting laser to CW mode...")
+        set(laser.laser_mode, "cw")
+        
+        # Set to initial power safely before starting
+        set(laser.cw_power_permille, int(power_start * 10))
+        time.sleep(0.5)
+
+        # === Setup Output Directories & Files ===
+        out_dir = output_dir_folder(base_dir=out_dir_base)
+        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+        data_file = os.path.join(out_dir, f'power_sweep_apd_{timestamp}.txt')
+        plot_file = os.path.join(out_dir, f'power_sweep_apd_{timestamp}.png')
+
+        print(f'Saving data to: {data_file}')
+        data_file_handle = open(data_file, 'w')
+        data_file_handle.write(f'# APD Power Sweep (CW) - {timestamp}\n')
+        data_file_handle.write(f'# Start: {power_start}%, Stop: {power_stop}%, Step: {power_step}%\n')
+        data_file_handle.write('# Power(%)\tAPD_1(cps)\tAPD_2(cps)\tTotal(cps)\n')
+
+        # === Setup Arrays & Plotting ===
+        prange = np.arange(power_start, power_stop + power_step, power_step)
+        powers, apd1_counts, apd2_counts, totals = [], [], [], []
+        max_int, best_power = -1, power_start
+
+        plt.ion()
+        fig, ax = plt.subplots()
+        line_total, = ax.plot([], [], 'b.-', label='Total Counts')
+        line_d1, = ax.plot([], [], 'r.-', alpha=0.5, label='APD 1')
+        line_d2, = ax.plot([], [], 'g.-', alpha=0.5, label='APD 2')
+        
+        ax.legend(loc='upper left')
+        ax.set_xlabel('Laser Power (%)')
+        ax.set_ylabel('Log Counts (cps)' if logy else 'Counts (cps)')
+        ax.set_xlim(power_start, power_stop)
+        ax.set_title('APD Power Sweep')
+        fig.tight_layout()
+
+        # === Start Scan Loop ===
+        print("Starting APD power sweep...")
+        for p in prange:
+            # Set Power
+            pwr_permille = int(p * 10)
+            set(laser.cw_power_permille, pwr_permille)
+            time.sleep(0.2) # Wait for laser to stabilize and APDs to integrate
+
+            # Read APDs
+            cnt = sn.getCountRates()
+            val_d1 = cnt[d1]
+            val_d2 = cnt[d2]
+            total = val_d1 + val_d2
+
+            # Critical Safety Check
+            if total > 2000000:
+                print(f"\nCRITICAL: Total counts exceeded safe limit (2M): {total}")
+                print(f"Dropping laser power to {power_start}% immediately.")
+                set(laser.cw_power_permille, int(power_start * 10))
+                raise Exception(f"Max APD counts reached ({total} cps). Sweep aborted to protect detectors.")
+
+            # Store Data
+            powers.append(p)
+            apd1_counts.append(np.log10(val_d1 + 1) if logy else val_d1)
+            apd2_counts.append(np.log10(val_d2 + 1) if logy else val_d2)
+            totals.append(np.log10(total + 1) if logy else total)
+
+            # Track Max
+            if total > max_int:
+                max_int, best_power = total, p
+
+            # Write to File
+            data_file_handle.write(f'{p:.3f}\t{val_d1}\t{val_d2}\t{total}\n')
+
+            # Update Plot
+            line_total.set_data(powers, totals)
+            line_d1.set_data(powers, apd1_counts)
+            line_d2.set_data(powers, apd2_counts)
+            
+            ax.set_title(f'APD Power Sweep | Max: {max_int:.0f} cps @ {best_power:.2f}%')
+            ax.relim()
+            ax.autoscale_view(True, True, True)
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+
+        print(f"\nSweep complete. Max counts: {max_int:.0f} cps at {best_power:.2f}%.")
+
+        plt.ioff()
+        plt.savefig(plot_file)
+        if show_plot: 
+            plt.show()
+        else: 
+            plt.close(fig)
+            
+        return best_power, max_int
+
+    except Exception as e:
+        print(f"\nA critical error occurred during APD power sweep: {e}")
+        return power_start, None
+    except KeyboardInterrupt as k:
+        print(f"\nKeyboard interrupt: {k}")
+        print(f"Resetting laser power to initial ({power_start}%) ---")
+        set(laser.cw_power_permille, int(power_start * 10))
+        return power_start, None
+    finally:
+        # === Cleanup Resources ===
+        print("\n--- Cleaning up APD power sweep resources ---")
+        # Ensure laser power is reset safely at the end
+        if laser:
+            try:
+                set(laser.cw_power_permille, int(power_start * 10))
+                print(f"Laser power safely returned to {power_start}%")
+            except: pass
+
+        if data_file_handle:
+            data_file_handle.close()
+            print("Data file closed.")
+        if sn_local and sn: 
+            close_device_all(sn=sn)
+        if laser_local and laser: 
+            close_device_all(laser=laser)
+
+def run_spectrum_power_sweep(camera, laser=None, power_start=0.0, power_stop=10.0, power_step=1.0,
+                             bg=True, showplt=True, engaged=False,
+                             wl_min=None, wl_max=None,
+                             out_dir_base=r'D:\Data_Python_PL\PowerSweeps'):
+    """
+    Performs a CW laser power sweep using a PicoQuant Taiko laser.
+    Measures a single background once at the start if bg=True.
+    Saves the full spectrum at each power step to a text file.
+    Plots the integrated intensity vs laser power in real time.
+    """
+    laser_local = False
+    data_file_handle = None
+    vbg = None
+    
+    try:
+        # --- Device Initialization ---
+        if laser is None:
+            try:
+                laser = instruments.picoQuant.PicoQuant_Taiko_PDL_M1()
+                if laser is None: 
+                    raise ConnectionError("Failed to start Taiko Laser.")
+                laser_local = True
+            except Exception as e:
+                raise ConnectionError(f"Failed to connect to laser: {e}")
+
+        if engaged:
+            laser_local = False
+
+        # --- Configure Laser (Softlock False, CW Mode) ---
+        set(laser.softlock_en, False)
+        print(f"Laser softlock state : {get(laser.softlock_en)}")
+
+        print("Setting laser to CW mode...")
+        set(laser.laser_mode, "cw")
+
+        # --- Output Directory & Timestamp Setup ---
+        out_dir = output_dir_folder(base_dir=out_dir_base)
+        timestamp = time.strftime('%Y_%m_%d_%H_%M_%S')
+
+        # --- Single Background Measurement (Done Once) ---
+        if bg:
+            data_file_bg = os.path.join(out_dir, f'spectrum_data_BG_{timestamp}.txt')
+            set(camera.shutter, False)
+            time.sleep(1)
+            print("Taking single BG spectrum...")
+            print(f"Using Filename : {data_file_bg}")
+            vbg = get(camera.readval, filename=data_file_bg)
+            set(camera.shutter, True)
+            time.sleep(1)
+
+        # Define power range array
+        prange = np.arange(power_start, power_stop + power_step, power_step)
+        powers, totals = [], []
+        max_counts, best_power = -1, power_start
+
+        # --- Get Wavelength Array & Mask ---
+        print("Taking initial dummy spectrum to calibrate wavelengths...")
+        if bg and vbg is not None:
+            v_init = get(camera.readval, bkg_rem=vbg[1])
+        else:
+            v_init = get(camera.readval)
+        
+        wavelengths = v_init[0]
+        if wl_min is None: wl_min = wavelengths[0]
+        if wl_max is None: wl_max = wavelengths[-1]
+        wl_mask = (wavelengths >= wl_min) & (wavelengths <= wl_max)
+        
+        print(f"Plotting and tracking sum of intensities between {wl_min:.1f} nm and {wl_max:.1f} nm.")
+
+        # --- File Saving Setup ---
+        data_file = os.path.join(out_dir, f'power_sweep_spectro_{timestamp}.txt')
+        plot_file = os.path.join(out_dir, f'power_sweep_spectro_{timestamp}.png')
+        
+        data_file_handle = open(data_file, 'w')
+        data_file_handle.write(f'# Spectro Power Sweep (CW) - {timestamp}\n')
+        data_file_handle.write(f'# Start: {power_start}, Stop: {power_stop}, Step: {power_step}, Background Subtraction: {bg}\n')
+        data_file_handle.write(f'# Integrated Range for Plotting: {wl_min} to {wl_max} nm\n')
+        wl_headers = "\t".join([f"{w:.2f}" for w in wavelengths])
+        data_file_handle.write(f'Power(%)\t{wl_headers}\n')
+
+        # --- Plot Setup ---
+        plt.ion()
+        fig, ax = plt.subplots()
+        line_total, = ax.plot([], [], 'r.-', label=f'Sum ({wl_min:.1f}-{wl_max:.1f}nm)')
+        ax.legend(loc='upper left')
+        ax.set_xlabel('Laser Power (%)')
+        ax.set_ylabel('Counts (Arb.)')
+        ax.set_xlim(power_start, power_stop)
+
+        print("Starting spectro power sweep...")
+        for p in prange:
+            pwr_permille = int(p * 10) # Convert % to permille (0-1000)
+            set(laser.cw_power_permille, pwr_permille)
+            time.sleep(0.1) # Stabilization pause
+
+            # --- Read Spectrum (Reusing the single vbg) ---
+            if bg and vbg is not None:
+                v = get(camera.readval, bkg_rem=vbg[1])
+            else:
+                v = get(camera.readval)
+            intensities = v[1]
+            
+            filtered_sum = np.sum(intensities[wl_mask])
+            
+            powers.append(p)
+            totals.append(filtered_sum)
+
+            if filtered_sum > max_counts:
+                best_power, max_counts = p, filtered_sum
+                
+            # Write exact point data to file
+            int_data_str = "\t".join([f"{count:.2f}" for count in intensities])
+            data_file_handle.write(f'{p:.3f}\t{int_data_str}\n')
+
+            # Real-time plot update
+            line_total.set_data(powers, totals)
+            ax.set_title(f'Power Sweep | Peak Counts at P: {best_power:.2f}%')
+            ax.relim()
+            ax.autoscale_view(True, True, True)
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+
+        print(f"\nPower sweep complete. Peak intensity observed at power: {best_power:.2f}%")
+
+        plt.ioff()
+        plt.savefig(plot_file)
+        if showplt: 
+            plt.show()
+        else: 
+            plt.close(fig)
+
+        return best_power
+
+    except Exception as e:
+        print(f"An error occurred during power sweep: {e}")
+        return power_start 
+    except KeyboardInterrupt as k:
+        print(f"Keyboard interrupt : {k}")
+        print(f"Resetting laser power to initial ({power_start}%) ---")
+        pwr_permille = int(power_start * 10)
+        set(laser.cw_power_permille, pwr_permille)
+        return power_start
+    finally:
+        # --- Cleanup ---
+        if data_file_handle:
+            data_file_handle.close()
+        if laser_local and laser: 
+            close_device_all(laser=laser)
+
+
+
 
 
 def run_focus_sweep_save(fbase=None, fstep=0.1, fsize=30, movetobest=True, showplt=True, engaged=False, 
@@ -3895,4 +4210,5 @@ def run_live_camera(camera_serial="11484", exposure_ms=10):
         plt.ioff()
         plt.close('all')
         print("Camera disconnected and plot closed.")
-        
+
+

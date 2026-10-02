@@ -11,7 +11,6 @@ import serial
 from datetime import datetime
 from io import StringIO
 
-# === Fix for FORTRAN/MKL CTRL+C Crash ===
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
 # === Third-party ===
@@ -43,8 +42,7 @@ except ImportError as e: print(f"snAPI error: {e}")
 try: import nidaqmx; from nidaqmx.constants import Edge
 except ImportError as e: print(f"nidaqmx error: {e}")
 
-try: import labview_buttons_v2 as lv
-except ImportError as e: print(f"LabVIEW buttons error: {e}")
+
 
 try: from pylablib.devices import Thorlabs
 except ImportError as e: print(f"Thorlabs error: {e}")
