@@ -234,10 +234,11 @@ def start_apds(detector_config=2, trpl=False, read_counts=True, graph_counts=Fal
     Initializes the MH150. Validates that total count rates > 200 cps before 
     returning the device handle. Retries up to 3 times, polling for 10 seconds 
     per attempt.
+    trpl True sets sync enable
+    detector 1 for exciletas and 2 for mpds
     """
-    config_path_1_det = r"C:\Codes\Picoquant\snAPI_configs\Exciletas_MH.ini"
-    config_path_2_det = r"C:\Codes\Picoquant\snAPI_configs\MPDs_MH.ini"
-    config_path_3_det = r"C:\Codes\Picoquant\snAPI_configs\MPDs_MH_TRPL.ini"
+    config_path_1_det = r"C:\Codes\Picoquant\snAPI_configs\channels_config.ini"
+    config_path_2_det = r"C:\Codes\Picoquant\snAPI_configs\channels_config_sync.ini"
 
     d0 = 0  # Sync channel is standardly 0
 
@@ -258,29 +259,26 @@ def start_apds(detector_config=2, trpl=False, read_counts=True, graph_counts=Fal
             # --- 2. Configuration Routing ---
             if detector_config == 1:
                 d1, d2 = 1, 2
-                sn.loadIniConfig(config_path_1_det)
-                print(f'Using Exciletas: {sn.deviceConfig["ID"]}')
+                if trpl:
+                    sn.loadIniConfig(config_path_2_det)
+                    print(f'Using MPDs for TRPL: {sn.deviceConfig["ID"]}')
+                else:
+                    sn.loadIniConfig(config_path_1_det)
+                    print(f'Using MPDs (Standard): {sn.deviceConfig["ID"]}')
                 
             elif detector_config == 2:
                 d1, d2 = 3, 4
                 if trpl:
-                    sn.loadIniConfig(config_path_3_det)
+                    sn.loadIniConfig(config_path_2_det)
                     print(f'Using MPDs for TRPL: {sn.deviceConfig["ID"]}')
                 else:
-                    sn.loadIniConfig(config_path_2_det)
+                    sn.loadIniConfig(config_path_1_det)
                     print(f'Using MPDs (Standard): {sn.deviceConfig["ID"]}')
-                    
-            elif detector_config == 3:
-                d1, d2 = 3, 4
-                sn.loadIniConfig(config_path_3_det)
-                print(f'Using MPDs for TRPL (Config 3 direct): {sn.deviceConfig["ID"]}')
-                trpl = True 
             else:
                 raise ValueError(f"Invalid detector_config: {detector_config}")
 
-            # --- 3. Verification: Poll for 10 seconds ensuring Total > 200 ---
             counts_passed = False
-            print("Polling APD count rates for up to 10 seconds (Requires Total > 200 cps)...")
+            print("Polling APD count rates for up to 10 seconds...")
             
             for sec in range(1, 11): # 1 to 10 seconds
                 time.sleep(1) # Let hardware accumulate
@@ -294,7 +292,7 @@ def start_apds(detector_config=2, trpl=False, read_counts=True, graph_counts=Fal
                     
                 if total > 200:
                     counts_passed = True
-                    print("Verification passed! Handing over instrument.")
+                    print("Verification passed")
                     break # Exit the polling loop early
             
             if not counts_passed:
@@ -348,11 +346,7 @@ def start_apds(detector_config=2, trpl=False, read_counts=True, graph_counts=Fal
                     close_device_all(sn=sn)
                     return (None, None, None, None) if trpl else (None, None, None)
 
-            # --- 5. Successful Standard Return ---
-            if trpl:
-                return sn, d0, d1, d2
-            else:
-                return sn, d1, d2
+            return sn, d1, d2
 
         except Exception as e:
             print(f"An error occurred during attempt {attempt + 1}: {e}")
@@ -484,8 +478,8 @@ def filterwheel(slot, offset=11.224, home_first=False, apd_final_state=False, wl
     try:
         with serial.Serial(port='COM4', baudrate=38400, timeout=1) as drive:
             # Power down sensitive equipment during move
-            power_whitelight(drive, False)
             power_apds(drive, False)
+            power_whitelight(drive, False)
             
             if home_first:
                 seek_home_precise(drive)
@@ -564,15 +558,25 @@ def filter_switch(esp, moveto='no', showcmd=False):
 def set_detection(state, home_first=False, apd_final_state=False, wlight_final_state=False, offset=11.224):
     """
     Coordinates all hardware and prints a complete state output table.
+        configs = {
+        "camera":  {"slot": 7,  "filter": "no",   "detector": "camera"},
+        "apd":     {"slot": 10, "filter": "n405", "detector": "apd"},
+        "spectro": {"slot": 1,  "filter": "n405", "detector": "spectro"},
+        "apd-435": {"slot": 5, "filter": "n405", "detector": "apd"},
+        "apd-550": {"slot": 2, "filter": "n533", "detector": "apd"},
+        "spectro-550": {"slot": 2, "filter": "n533", "detector": "spectro"}
+    
     """
     print(f"\n--- Initiating Hardware Shift to: [{state.upper()}] ---")
     
     # 1. Manage Serial Filter Wheel & Lights
     configs = {
-        "camera":  {"slot": 0,  "filter": "no",   "detector": "camera"},
+        "camera":  {"slot": 7,  "filter": "no",   "detector": "camera"},
         "apd":     {"slot": 10, "filter": "n405", "detector": "apd"},
         "spectro": {"slot": 1,  "filter": "n405", "detector": "spectro"},
-        "apd-435": {"slot": 5, "filter": "n405", "detector": "apd"}
+        "apd-435": {"slot": 5, "filter": "n405", "detector": "apd"},
+        "apd-550": {"slot": 2, "filter": "n533", "detector": "apd"},
+        "spectro-550": {"slot": 2, "filter": "n533", "detector": "spectro"}
     }
     
     if state not in configs:
@@ -1661,7 +1665,7 @@ def estimate_lifetime(time_bins_ns, hist_data):
 
 
 def trpl_measure(time_m=600, sync_offset=20, save_figure=True, sn=None, 
-                 detector_config=3, frequency_mhz=10, update_hz_laser=False, 
+                 detector_config=2, frequency_mhz=10, update_hz_laser=False, 
                  laser=None, binsize_ps=10, 
                  output_dir=r'D:\Data_Python_PL\TRPLdata',ide=None):
     """
@@ -1708,7 +1712,8 @@ def trpl_measure(time_m=600, sync_offset=20, save_figure=True, sn=None,
     try:
         # === 3. Device Initialization ===
         if sn is None:
-            sn, sync_ch, det_ch1, det_ch2 = start_apds(detector_config=detector_config, trpl=True)
+            sn, det_ch1, det_ch2 = start_apds(detector_config=detector_config, trpl=True)
+            sync_ch = 0
             if sn is None: 
                 raise ConnectionError("Failed to start APDs.")
             sn_local = True
